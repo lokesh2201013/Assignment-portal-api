@@ -1,6 +1,6 @@
 package database
 
-import (
+/*import (
     "github.com/go-redis/redis/v8"
     "log"
 )
@@ -15,4 +15,4 @@ func ConnectRedis(){
         log.Fatal("Failed to connect to Redis:", err)
     }
     log.Println("Connected to Redis!")
-}
+}*/

@@ -3,7 +3,7 @@ package routes
 import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/lokesh2201013/assignment-portal/controllers"
-	"github.com/lokesh2201013/assignment-portal/middleware"
+	"github.com/lokesh2201013/assignment-portal/middlewares"
 
 )
 
