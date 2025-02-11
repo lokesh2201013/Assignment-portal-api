@@ -1,1 +1,0 @@
-CREATE DATABASE email_db;
