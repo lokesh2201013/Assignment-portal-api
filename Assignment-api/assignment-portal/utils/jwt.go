@@ -8,7 +8,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-var secretKey = []byte("your-secret-key") // Replace with a secure secret key
+var secretKey = []byte("your-secret-key") 
 
 func GenerateJWT(userID int, role string) (string, error) {
 	claims := jwt.MapClaims{

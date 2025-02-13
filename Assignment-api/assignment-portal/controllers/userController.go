@@ -3,8 +3,8 @@ package controllers
 import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/lokesh2201013/assignment-portal/models"
-	"github.com/lokesh2201013/assignment-portal/database" // Assuming you have a database package to interact with DB
-	"github.com/lokesh2201013/assignment-portal/utils"    // Assuming you have a utility package for hashing and token generation
+	"github.com/lokesh2201013/assignment-portal/database" 
+	"github.com/lokesh2201013/assignment-portal/utils"    
 	"log"
 )
 
@@ -19,6 +19,15 @@ func Register(c *fiber.Ctx)error{
 	if err:=database.DB.Where("email=?",user.Email).First(&existingUser).Error;err==nil{
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Email already in use"})
 	}
+
+	if user.Role=="user"{
+        if user.Branch == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Student has not defined Branch"})
+		}
+		if user.Semester == 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Student has not defined Branch"})
+		} 
+    }
 
 	hashpassword, err:=utils.HashPassword(user.Password)
 

@@ -31,19 +31,6 @@ func RejectAssignment(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "Assignment rejected"})
 }
 
-func UploadAssignment(c *fiber.Ctx) error {
-	var assignment models.Assignment
-	if err := c.BodyParser(&assignment); err != nil {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
-	}
-
-	if err := database.DB.Create(&assignment).Error; err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Error uploading assignment"})
-	}
-
-	return c.Status(http.StatusCreated).JSON(fiber.Map{"message": "Assignment uploaded successfully"})
-}
-
 func GetUserAssignments(c *fiber.Ctx) error {
 	userID := c.Locals("user_id").(int)
 	var assignments []models.Assignment

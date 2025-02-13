@@ -8,4 +8,6 @@ type Assignment struct {
     Status    string `json:"status" validate:"oneof=pending accepted rejected"`
     CreatedAt string `json:"created_at"`
     UpdatedAt string `json:"updated_at"`
+    Branch   string `json: "branch" validate:"required" `
+    Semester int    `json: "semester" validate:"required"`
 }
