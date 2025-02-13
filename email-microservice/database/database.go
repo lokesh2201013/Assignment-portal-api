@@ -18,7 +18,6 @@ func InitDB() {
         log.Fatal("Error loading .env file")
     }
 
-    // Read database connection details from environment variables
     dsn := "host=" + os.Getenv("DB_HOST") + 
            " user=" + os.Getenv("DB_USER") + 
            " password=" + os.Getenv("DB_PASSWORD") + 
@@ -31,9 +30,8 @@ func InitDB() {
         log.Fatal("Failed to connect to database:", err)
     }
 
-    // Auto-migrate models
     db.AutoMigrate(&models.Sender{}, &models.Template{}, &models.User{}, &models.Analytics{})
 
-    // Assign DB to the global variable
+
     DB = db
 }

@@ -26,7 +26,6 @@ type Template struct {
 
 type User struct {
 	ID        uint           `gorm:"primaryKey"`
-	SandboxTime time.Time
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 	DeletedAt  gorm.DeletedAt `gorm:"index"`

@@ -11,10 +11,6 @@ import (
 	"gopkg.in/gomail.v2"
 )
 
-const (
-	maxEmailsPerDay    = 200
-	maxEmailsPerSecond = 1
-)
 type EmailRequest struct {
 	From    string   `json:"from"`
 	To      []string `json:"to"`
@@ -108,12 +104,6 @@ func SendEmail(c *fiber.Ctx) error {
 	}
 
 	// Ensure we respect the rate limits
-	daysSinceCreation := int(time.Since(admine.CreatedAt).Hours() / 24)
-	if daysSinceCreation <= 7 {
-		if analytics.AccumulatedEmail >= maxEmailsPerDay*daysSinceCreation+1 {
-			return c.Status(400).JSON(fiber.Map{"error": "Mail limit of day exceeded"})
-		}
-	}
 
 	// Send emails one by one
 	for _, recipient := range req.To {
