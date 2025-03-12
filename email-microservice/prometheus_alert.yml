@@ -1,0 +1,27 @@
+groups:
+  - name: example_alerts
+    rules:
+      - alert: HighCPUUsage
+        expr: cpu_usage_percentage > 90
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "CPU usage is above 90% for last 30sec"
+      
+      - alert: HighReqDuration
+        expr: http_request_duration_seconds_sum / http_request_duration_seconds_count > 2  
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "High average request duration > 2s for 30s"
+
+      - alert: HighErr%
+        expr: rate(http_requests_total{status=~"5.."}[30s]) > 0.1  # More than 0.1 5xx errors per second in the last 5 minutes
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate of server side 5xx > 0.1/s for 30 s"
+

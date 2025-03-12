@@ -1,0 +1,15 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: 'email'
+
+receivers:
+  - name: 'email'
+    email_configs:
+      - to: 'lokeshchoraria60369@gmail.com'
+        from: 'lokeshchoraria2@gmail.com'
+        smarthost: 'smtp.example.com:587'
+        auth_username: 'lokeshchoraria2@gmail.com'
+        auth_password: 'your-email-password'
+        require_tls: true
