@@ -18,13 +18,6 @@ variable "pub_cidr_block" {
   description = "A list of CIDR blocks for the public subnets."
 }
 
-variable "pri_subnet_count" {
-  description = "The number of private subnets to create."
-}
-
-variable "pri_sub_name" {
-  description = "The base name for private subnets."
-}
 
 variable "pri_cidr_block" {
   description = "A list of CIDR blocks for the private subnets."
@@ -34,9 +27,7 @@ variable "pub_availability_zone" {
   description = "A list of availability zones for the public subnets."
 }
 
-variable "pri_availability_zone" {
-  description = "A list of availability zones for the private subnets."
-}
+
 
 variable "region" {
   description = "The region where resources will be created."
@@ -95,30 +86,7 @@ variable "max_capacity_on_demand" {
   description = "The maximum number of nodes for the on-demand node pool."
 }
 
-variable "is_spot_node_pool_enabled" {
-  description = "Boolean flag to enable or disable the spot node pool in the GKE cluster."
-}
-
-variable "spot_instance_type" {
-  description = "The machine type to be used for the spot node pool."
-}
-
-variable "desired_capacity_spot" {
-  description = "The desired number of nodes for the spot node pool."
-}
-
-variable "min_capacity_spot" {
-  description = "The minimum number of nodes for the spot node pool."
-}
-
-variable "max_capacity_spot" {
-  description = "The maximum number of nodes for the spot node pool."
-}
-
 variable "addons" {
   description = "Additional add-ons to be deployed in the cluster."
 }
 
-variable "private_route_name" {
-  description = "The name of the private route."
-}
