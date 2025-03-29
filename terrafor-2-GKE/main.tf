@@ -8,6 +8,9 @@ module "gke" {
   env          = local.env
   cluster_name = "${local.env}-${var.cluster_name}"
   vpc_name     = var.vpc_name
+  zone = var.zone
+  region = var.region
+  master_password = var.master_password
 
   pub_subnet_count = var.pub_subnet_count
   pub_sub_name = var.pub_sub_name

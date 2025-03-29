@@ -17,7 +17,7 @@ is_gke_cluster_enabled = true
 cluster_version = ""
 cluster_name = "gke-cluster"
 
-master_password = "admin"
+master_password = "password"
 is_ondemand_node_pool_enabled = true
 ondemand_instance_type = "e2-medium"
 desired_capacity_on_demand = 3

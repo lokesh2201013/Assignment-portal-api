@@ -43,6 +43,7 @@ func AssignTostudents(c *fiber.Ctx) error{
 	 for _, student := range students {
 		assignments = append(assignments, models.Assignment{
 			UserID:    student.ID,
+			Email:     student.Email,
 			AdminID:   assignment.AdminID,
 			Task:      assignment.Task,
 			Status:    "pending",
@@ -57,5 +58,6 @@ func AssignTostudents(c *fiber.Ctx) error{
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Error assigning tasks"})
 	}
 
+    assignTask(assignments)
 	return c.JSON(fiber.Map{"message": "Assignment assigned successfully", "count": len(assignments)})
 }

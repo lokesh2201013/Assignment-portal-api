@@ -90,3 +90,7 @@ variable "addons" {
   description = "Additional add-ons to be deployed in the cluster."
 }
 
+variable "zone" {
+  description = "The zones where the GKE cluster will be deployed."
+  
+}

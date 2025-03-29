@@ -2,36 +2,36 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 	"log"
-	"time"
 
-	pb "github.com/lokesh2201013/assignment-portal/proto" // Import generated proto
+	pb "path/to/generated/email/proto"
+	"github.com/lokesh2201013/assignment-portal/models"
 	"google.golang.org/grpc"
 )
 
-func SendEmailNotification(adminName, subject, body string, recipients []string) {
-	conn, err := grpc.Dial("email-microservice:50051", grpc.WithInsecure())
+func assignTask(assignments []models.Assignment) {
+	conn, err := grpc.Dial("email-service:50051", grpc.WithInsecure())
 	if err != nil {
-		log.Fatalf("Could not connect to Email Service: %v", err)
+		log.Fatalf("Could not connect to EmailService: %v", err)
 	}
 	defer conn.Close()
-
+   
 	client := pb.NewEmailServiceClient(conn)
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
-	defer cancel()
-
-	req := &pb.AssignmentEmailRequest{
-		AdminName:  adminName,
-		Subject:    subject,
-		Body:       body,
-		Recipients: recipients,
+     var email []string
+	for _, a := range assignments {
+       email=append(email, a.Email)
 	}
+		req := &pb.AssignmentEmailRequest{
+			Subject:    fmt.Sprintf("You have a task assingmed by Admin %d", a.AdminID),
+			Body:       fmt.Sprintf("You have been assigned a new task.\nTask: %s\nBranch: %s\nSemester: %d", a.Task, a.Branch, a.Semester),
+			Recipients: email,
+		}
+		
+		res, err := client.SendAssignmentNotification(context.Background(), req)
+		if err != nil {
+			log.Printf("Could not send email %v", err)
+		}
 
-	resp, err := client.SendAssignmentNotification(ctx, req)
-	if err != nil {
-		log.Fatalf("Error calling Email Service: %v", err)
+		log.Printf("Email sent %v", res.Message)
 	}
-
-	log.Printf("Email Service Response: %s", resp.Message)
-}

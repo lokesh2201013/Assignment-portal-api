@@ -2,6 +2,7 @@ package models
 
 type Assignment struct {
     ID        int    `json:"id"`
+    Email     string `json:"email" validate:"required,email"`
     UserID    int    `json:"user_id"`
     AdminID   int    `json:"admin_id"`
     Task      string `json:"task" validate:"required"`
