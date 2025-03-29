@@ -9,6 +9,8 @@ import (
 	"github.com/lokesh2201013/email-service/metrics"
 	"github.com/lokesh2201013/email-service/models"
 	"gopkg.in/gomail.v2"
+	"os"
+	"strconv"
 )
 
 type EmailRequest struct {
@@ -144,4 +146,27 @@ func SendEmail(c *fiber.Ctx) error {
 	database.DB.Save(&analytics)
 
 	return c.JSON(fiber.Map{"message": "Emails processed successfully"})
+}
+
+func SendEmail_Grpc(subject string ,body string,Email []string) error {
+	port, err := strconv.Atoi(os.Getenv("STMPPort"))
+	if err != nil {
+		return err
+	}
+
+	d := gomail.NewDialer(os.Getenv("STMPHost"), port, os.Getenv("Name"), os.Getenv("AppPassword"))
+    
+	for _,to := range Email {
+		m := gomail.NewMessage()
+	m.SetHeader("From", os.Getenv("Name"))
+	m.SetHeader("To", to)
+	m.SetHeader("Subject", subject)
+	m.SetBody("text/plain", body)
+	err:=d.DialAndSend(m)
+	if err != nil {
+		return err
+	}
+  }
+  
+	return nil
 }

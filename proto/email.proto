@@ -9,9 +9,9 @@ service EmailService {
 }
 
 message AssignmentEmailRequest {
-  string subject = 2;
-  string body = 3;
-  repeated string recipients = 4; 
+  string subject = 1;
+  string body = 2;
+  repeated string recipients = 3; 
 }
 
 message EmailResponse {

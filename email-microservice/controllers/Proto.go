@@ -2,11 +2,11 @@ package controllers
 
 import (
 	"context"
-	"fmt"
+	//"fmt"
 	"log"
 	"net"
 
-	pb "path/to/generated/email/proto"
+	pb "github.com/lokesh2201013/email-service/proto"
 	"google.golang.org/grpc"
 )
 
@@ -30,16 +30,10 @@ func (s *emailServiceServer) SendAssignmentNotification(ctx context.Context, req
 	log.Printf("Sending email to: %v", req.Recipients)
 
 	// Simulate sending email (replace with actual email-sending logic)
-	for _, recipient := range req.Recipients {
-		fmt.Printf("Sending email to: %s\nSubject: %s\nBody: %s\n", recipient, req.Subject, req.Body)
-	}
-
+	SendEmail_Grpc(req.Subject, req.Body, req.Recipients)
+    
 	return &pb.EmailResponse{
 		Message: "Emails sent successfully",
 		Success: true,
 	}, nil
-}
-
-func main() {
-	
 }

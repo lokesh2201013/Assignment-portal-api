@@ -15,17 +15,14 @@ import (
 )
 
 func getCPUUsage() float64 {
-	percentages, err := cpu.Percent(0, false) // Get CPU usage of all cores as a single percentage
+	percentages, err := cpu.Percent(0, false)
 	if err != nil {
 		return 0
 	}
 	return percentages[0]
 }
 
-func main() {
-	database.InitDB()
-	app := fiber.New()
-
+func setupMetrics() (*prometheus.CounterVec, prometheus.Gauge, prometheus.Histogram, prometheus.Summary) {
 	counter := prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "http_requests_total",
@@ -59,35 +56,36 @@ func main() {
 
 	prometheus.MustRegister(counter, gauge, histogram, summary)
 
-	// goroutine to update CPU usage periodically
 	go func() {
 		for {
-			gauge.Set(getCPUUsage()) // Update CPU usage every 5 sec
-			time.Sleep(5 * time.Second) 
+			gauge.Set(getCPUUsage())
+			time.Sleep(5 * time.Second)
 		}
 	}()
 
-	// Middleware for Metrics Tracking
+	return counter, gauge, histogram, summary
+}
+
+func main() {
+	database.InitDB()
+	app := fiber.New()
+
+	counter, _, histogram, summary := setupMetrics()
+
 	app.Use(func(c *fiber.Ctx) error {
 		start := time.Now()
-
-		counter.WithLabelValues(c.Method(), c.Path()).Inc() // Count requests
-
+		counter.WithLabelValues(c.Method(), c.Path()).Inc()
 		err := c.Next()
-
 		duration := time.Since(start).Seconds()
-		histogram.Observe(duration) // Observe request duration
+		histogram.Observe(duration)
 		summary.Observe(duration)
-
 		return err
 	})
 
 	app.Get("/metrics", func(c *fiber.Ctx) error {
 		c.Set("Content-Type", "text/plain")
 		handler := promhttp.Handler()
-
 		fasthttpadaptor.NewFastHTTPHandler(handler)(c.Context())
-
 		return nil
 	})
 
