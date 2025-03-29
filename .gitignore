@@ -1,0 +1,5 @@
+# Ignore Terraform directories
+.terraform/
+
+# Ignore provider binaries
+terraform-provider-*.exe
