@@ -23,9 +23,9 @@ const (
 
 type AssignmentEmailRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Subject       string                 `protobuf:"bytes,2,opt,name=subject,proto3" json:"subject,omitempty"`
-	Body          string                 `protobuf:"bytes,3,opt,name=body,proto3" json:"body,omitempty"`
-	Recipients    []string               `protobuf:"bytes,4,rep,name=recipients,proto3" json:"recipients,omitempty"`
+	Subject       string                 `protobuf:"bytes,1,opt,name=subject,proto3" json:"subject,omitempty"`
+	Body          string                 `protobuf:"bytes,2,opt,name=body,proto3" json:"body,omitempty"`
+	Recipients    []string               `protobuf:"bytes,3,rep,name=recipients,proto3" json:"recipients,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -139,10 +139,10 @@ const file_email_proto_rawDesc = "" +
 	"\n" +
 	"\vemail.proto\x12\x05email\"f\n" +
 	"\x16AssignmentEmailRequest\x12\x18\n" +
-	"\asubject\x18\x02 \x01(\tR\asubject\x12\x12\n" +
-	"\x04body\x18\x03 \x01(\tR\x04body\x12\x1e\n" +
+	"\asubject\x18\x01 \x01(\tR\asubject\x12\x12\n" +
+	"\x04body\x18\x02 \x01(\tR\x04body\x12\x1e\n" +
 	"\n" +
-	"recipients\x18\x04 \x03(\tR\n" +
+	"recipients\x18\x03 \x03(\tR\n" +
 	"recipients\"C\n" +
 	"\rEmailResponse\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12\x18\n" +
