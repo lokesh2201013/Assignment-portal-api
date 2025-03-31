@@ -3,3 +3,5 @@
 
 # Ignore provider binaries
 terraform-provider-*.exe
+./email-microservice/.env
+./Assignment-api/.env
