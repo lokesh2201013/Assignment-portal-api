@@ -9,10 +9,15 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/valyala/fasthttp/fasthttpadaptor"
-
+      pb "github.com/lokesh2201013/email-service/proto"
+	"google.golang.org/grpc"
+	"net"
 	"github.com/lokesh2201013/email-service/database"
 	"github.com/lokesh2201013/email-service/routes"
 )
+type emailServiceServer struct {
+	pb.UnimplementedEmailServiceServer
+}
 
 func getCPUUsage() float64 {
 	percentages, err := cpu.Percent(0, false)
@@ -69,6 +74,19 @@ func setupMetrics() (*prometheus.CounterVec, prometheus.Gauge, prometheus.Histog
 func main() {
 	database.InitDB()
 	app := fiber.New()
+
+	listener, err := net.Listen("tcp", ":50051")
+	if err != nil {
+		log.Fatalf("Failed to listen: %v", err)
+	}
+
+	grpcServer := grpc.NewServer()
+	pb.RegisterEmailServiceServer(grpcServer, &emailServiceServer{})
+
+	log.Println("gRPC Email Service is running on port 50051")
+	if err := grpcServer.Serve(listener); err != nil {
+		log.Fatalf("Failed to serve: %v", err)
+	}
 
 	counter, _, histogram, summary := setupMetrics()
 

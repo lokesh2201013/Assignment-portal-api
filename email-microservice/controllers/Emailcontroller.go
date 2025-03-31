@@ -3,7 +3,7 @@ package controllers
 import (
 	"strings"
 	"time"
-
+     "fmt"
 	"github.com/gofiber/fiber/v2"
 	"github.com/lokesh2201013/email-service/database"
 	"github.com/lokesh2201013/email-service/metrics"
@@ -149,20 +149,22 @@ func SendEmail(c *fiber.Ctx) error {
 }
 
 func SendEmail_Grpc(subject string ,body string,Email []string) error {
-	port, err := strconv.Atoi(os.Getenv("STMPPort"))
+	port, err := strconv.Atoi(os.Getenv("SMTPPort")) // Corrected variable name
 	if err != nil {
 		return err
 	}
-
-	d := gomail.NewDialer(os.Getenv("STMPHost"), port, os.Getenv("Name"), os.Getenv("AppPassword"))
-    
+	
+	d := gomail.NewDialer(os.Getenv("SMTPHost"), port, os.Getenv("Name"), os.Getenv("AppPassword"))
+	
+	fmt.Println("Working fine 6")
 	for _,to := range Email {
 		m := gomail.NewMessage()
-	m.SetHeader("From", os.Getenv("Name"))
+	m.SetHeader("From", os.Getenv("SenderEmail"))
 	m.SetHeader("To", to)
 	m.SetHeader("Subject", subject)
 	m.SetBody("text/plain", body)
 	err:=d.DialAndSend(m)
+	fmt.Println("Working fine 7")
 	if err != nil {
 		return err
 	}
