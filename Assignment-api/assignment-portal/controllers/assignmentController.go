@@ -1,11 +1,13 @@
 package controllers
 
 import (
+	"fmt"
 	"net/http"
+	"time"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/lokesh2201013/assignment-portal/database"
 	"github.com/lokesh2201013/assignment-portal/models"
-	"time"
 )
 
 func UploadAssignment(c *fiber.Ctx) error {
@@ -58,6 +60,14 @@ func AssignTostudents(c *fiber.Ctx) error{
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Error assigning tasks"})
 	}
 
-    assignTask(assignments)
-	return c.JSON(fiber.Map{"message": "Assignment assigned successfully", "count": len(assignments)})
+	fmt.Println("Working fine1")
+
+    mail_status,err:=assignTask(assignments)
+	if err!=nil{
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error":  err})
+	}
+	fmt.Println("Working fine 10")
+	return c.JSON(fiber.Map{"message": "Assignment assigned successfully ",
+	 "count": len(assignments),
+	 "Mail Status":mail_status})
 }
