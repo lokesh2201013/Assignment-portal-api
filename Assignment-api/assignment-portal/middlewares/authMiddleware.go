@@ -52,7 +52,7 @@ func AdminOnly(handler fiber.Handler) fiber.Handler {
 
 func UserOnly(handler fiber.Handler) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		if role := c.Locals("role"); role != "user" {
+		if role := c.Locals("role"); role != "user" || role != "admin" {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Forbidden: User access required"})
 		}
 		return handler(c)

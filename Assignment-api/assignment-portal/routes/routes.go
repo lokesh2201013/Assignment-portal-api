@@ -13,12 +13,18 @@ func AuthRoutes(app *fiber.App) {
 
 	app.Use(middleware.AuthMiddleware())
 
-	app.Post("/admin/getassignments", middleware.AdminOnly(controllers.GetAdminAssignments))
-	app.Post("/admin/assignments/:id/accept", middleware.AdminOnly(controllers.AcceptAssignment))
-	app.Post("/admin/assignments/:id/reject", middleware.AdminOnly(controllers.RejectAssignment))
-	app.Post("/admin/assign_assignments" ,middleware.AdminOnly(controllers.AssignTostudents))
+app.Get("/admin/getassignments", middleware.AdminOnly(controllers.GetAdminAssignments))
 
+// Admin: Accept/reject assignments (no changes needed here)
+app.Post("/admin/assignments/accept", middleware.AdminOnly(controllers.AcceptAssignment))
+app.Post("/admin/assignments/reject", middleware.AdminOnly(controllers.RejectAssignment))
+
+	app.Post("/admin/assign_assignments" ,middleware.AdminOnly(controllers.AssignTostudents))
+     
+	//Use multipart form data for this request to send the files and images and comments
 	app.Post("/user/upload", middleware.UserOnly(controllers.UploadAssignment))
 	app.Get("/user/admins", controllers.GetAllAdmins)
+	app.Get("/user/assignments/:user_id", middleware.UserOnly(controllers.GetUserAssignments))
+	//Give a user_id as a query param
 	app.Get("/user/assignments", middleware.UserOnly(controllers.GetUserAssignments))
 }

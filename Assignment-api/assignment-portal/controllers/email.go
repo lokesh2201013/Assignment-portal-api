@@ -12,8 +12,39 @@ import (
 )
 
 func assignTask(assignments []models.Assignment) (string, error) {
-	conn, err := grpc.Dial("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
-     fmt.Println("Working fine 2")
+	if len(assignments) == 0 {
+		return "", fmt.Errorf("no assignments provided")
+	}
+
+	var emails []string
+	var task, branch, duedate string
+	var semester, adminID int
+
+	for _, a := range assignments {
+		emails = append(emails, a.Email)
+		task = a.Task
+		branch = a.Branch
+		semester = a.Semester
+		duedate = a.DueDate
+		adminID = a.AdminID
+	}
+
+	req := &pb.AssignmentEmailRequest{
+		Subject:    fmt.Sprintf("You have a task assigned by Admin %d", adminID),
+		Body:       fmt.Sprintf("You have been assigned a new task.\nTask: %s\nBranch: %s\nSemester: %d\nDue Date: %s", task, branch, semester, duedate),
+		Recipients: emails,
+	}
+
+	return sendAssignmentNotification(req)
+}
+
+func sendAssignmentNotification(req *pb.AssignmentEmailRequest) (string, error) {
+	if req == nil {
+		return "", fmt.Errorf("email request is nil")
+	}
+
+	conn, err := grpc.NewClient("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	fmt.Println("gRPC connection created")
 	if err != nil {
 		return "", fmt.Errorf("could not connect to EmailService: %v", err)
 	}
@@ -21,33 +52,13 @@ func assignTask(assignments []models.Assignment) (string, error) {
 
 	client := pb.NewEmailServiceClient(conn)
 
-	var emails []string
-	var adminID int
-	var task, branch string
-	var semester int
-
-	for _, a := range assignments {
-		emails = append(emails, a.Email)
-		task = a.Task
-		branch = a.Branch
-		semester = a.Semester
-		adminID = a.AdminID
-	}
-
-	req := &pb.AssignmentEmailRequest{
-		Subject:    fmt.Sprintf("You have a task assigned by Admin %d", adminID),
-		Body:       fmt.Sprintf("You have been assigned a new task.\nTask: %s\nBranch: %s\nSemester: %d", task, branch, semester),
-		Recipients: emails,
-	}
-    
-	//res, err := client.SendAssignmentNotification(context.Background(), req)
 	res, err := client.SendAssignmentNotification(context.Background(), req)
-	fmt.Println("Working fine 3")
-if err != nil {
-	fmt.Printf("Error sending email: %v\n", err) // Print the actual error
-	return "Email not sent", err
-}
-fmt.Println("Working fine 9")
+	if err != nil {
+		fmt.Printf("Error sending email: %v\n", err)
+		return "Email not sent", err
+	}
 
+	fmt.Println("gRPC call successful")
 	return res.Message, nil
 }
+

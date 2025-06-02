@@ -1,7 +1,10 @@
 package main
 
 import (
+	//"fmt"
+	"fmt"
 	"log"
+	"net"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -9,12 +12,14 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/valyala/fasthttp/fasthttpadaptor"
-      pb "github.com/lokesh2201013/email-service/proto"
+     "runtime"
+	pb "github.com/lokesh2201013/email-service/proto"
 	"google.golang.org/grpc"
-	"net"
+
 	"github.com/lokesh2201013/email-service/database"
 	"github.com/lokesh2201013/email-service/routes"
 )
+
 type emailServiceServer struct {
 	pb.UnimplementedEmailServiceServer
 }
@@ -71,10 +76,29 @@ func setupMetrics() (*prometheus.CounterVec, prometheus.Gauge, prometheus.Histog
 	return counter, gauge, histogram, summary
 }
 
-func main() {
-	database.InitDB()
-	app := fiber.New()
 
+func setupMiddleware(app *fiber.App, counter *prometheus.CounterVec, histogram prometheus.Histogram, summary prometheus.Summary) {
+	app.Use(func(c *fiber.Ctx) error {
+		start := time.Now()
+		counter.WithLabelValues(c.Method(), c.Path()).Inc()
+		err := c.Next()
+		duration := time.Since(start).Seconds()
+		histogram.Observe(duration)
+		summary.Observe(duration)
+		return err
+	})
+}
+
+func setupMetricsRoute(app *fiber.App) {
+	app.Get("/metrics", func(c *fiber.Ctx) error {
+		c.Set("Content-Type", "text/plain")
+		handler := promhttp.Handler()
+		fasthttpadaptor.NewFastHTTPHandler(handler)(c.Context())
+		return nil
+	})
+}
+
+func startGRPCServer() {
 	listener, err := net.Listen("tcp", ":50051")
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
@@ -87,26 +111,21 @@ func main() {
 	if err := grpcServer.Serve(listener); err != nil {
 		log.Fatalf("Failed to serve: %v", err)
 	}
+	fmt.Println("gRPC server stopped on port 50051")
+	grpcServer.Stop()
+}
 
+func main() {
+	runtime.GOMAXPROCS(2)
+	database.InitDB()
+
+	go startGRPCServer()
+
+	app := fiber.New()
 	counter, _, histogram, summary := setupMetrics()
 
-	app.Use(func(c *fiber.Ctx) error {
-		start := time.Now()
-		counter.WithLabelValues(c.Method(), c.Path()).Inc()
-		err := c.Next()
-		duration := time.Since(start).Seconds()
-		histogram.Observe(duration)
-		summary.Observe(duration)
-		return err
-	})
-
-	app.Get("/metrics", func(c *fiber.Ctx) error {
-		c.Set("Content-Type", "text/plain")
-		handler := promhttp.Handler()
-		fasthttpadaptor.NewFastHTTPHandler(handler)(c.Context())
-		return nil
-	})
-
+	setupMiddleware(app, counter, histogram, summary)
+	setupMetricsRoute(app)
 	routes.SetupRoutes(app)
 
 	log.Fatal(app.Listen(":3000"))

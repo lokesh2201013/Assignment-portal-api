@@ -106,7 +106,6 @@ func SendEmail(c *fiber.Ctx) error {
 	}
 
 	// Ensure we respect the rate limits
-
 	// Send emails one by one
 	for _, recipient := range req.To {
 		time.Sleep(time.Second)
@@ -149,7 +148,7 @@ func SendEmail(c *fiber.Ctx) error {
 }
 
 func SendEmail_Grpc(subject string ,body string,Email []string) error {
-	port, err := strconv.Atoi(os.Getenv("SMTPPort")) // Corrected variable name
+	port, err := strconv.Atoi(os.Getenv("SMTPPort"))
 	if err != nil {
 		return err
 	}

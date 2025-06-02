@@ -23,5 +23,5 @@ func (s *emailServiceServer) SendAssignmentNotification(ctx context.Context, req
     return &pb.EmailResponse{
         Message: "Emails sent successfully",
         Success: true,
-    }, nil
+    }, err
 }

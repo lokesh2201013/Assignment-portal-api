@@ -59,12 +59,11 @@ func Login(c *fiber.Ctx) error{
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error":"User not found"})
 	}
 
-     // Check if password matches
 	if err := utils.CheckPassword(user.Password, loginData.Password); err != nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid credentials"})
 	}
 
-	token, err := utils.GenerateJWT(user.ID, user.Role)
+	token, err := utils.GenerateJWT(user.UserID, user.Role)
 	if err != nil {
 		log.Println("Token generation error:", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Internal server error"})
@@ -78,11 +77,8 @@ func Login(c *fiber.Ctx) error{
 
 func GetAllAdmins(c *fiber.Ctx) error {
 	var admins []models.User
-
-	// Query the database for users with role "admin"
 	if err := database.DB.Where("role = ?", "admin").Find(&admins).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not retrieve admins"})
 	}
-
 	return c.Status(fiber.StatusOK).JSON(admins)
 }

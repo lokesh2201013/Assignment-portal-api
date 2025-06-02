@@ -4,19 +4,79 @@ import (
 	"fmt"
 	"net/http"
 	"time"
-
+     "os"
 	"github.com/gofiber/fiber/v2"
 	"github.com/lokesh2201013/assignment-portal/database"
 	"github.com/lokesh2201013/assignment-portal/models"
+	"strconv"
 )
 
 func UploadAssignment(c *fiber.Ctx) error {
-	var assignment models.Assignment
-	if err := c.BodyParser(&assignment); err != nil {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+	var assignment models.SubmitAssignment
+
+	// Parse text fields
+	id:=c.FormValue("user_id")
+	userid:=c.FormValue("user_id")
+    adminid:=c.FormValue("admin_id")
+	dueDateStr := c.FormValue("due_date")
+	comments := c.FormValue("comments")
+
+	// Get uploaded image
+	image, imageErr := c.FormFile("image")
+	if imageErr != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Image file is required"})
 	}
 
-	if err := database.DB.Create(&assignment).Error; err != nil {
+	// Get uploaded file (optional)
+	file, fileErr := c.FormFile("file")
+	if fileErr != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "File upload is required"})
+	}
+
+	// Optional: Get additional comments (map this to your model if needed)
+	
+	assignment.Comments = comments // Add to model if not already
+
+	// Late submission check
+	
+              dueDate, err := time.Parse(time.RFC3339, dueDateStr)
+              if err != nil {
+              return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid due_date format"})
+              }
+            assignment.LateSubmission = time.Now().After(dueDate)
+
+
+	// Save image to local directory
+	imageDir := "./uploads/images"
+	if err := os.MkdirAll(imageDir, os.ModePerm); err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create image directory"})
+	}
+	imagePath := fmt.Sprintf("%s/%d_%s", imageDir, time.Now().UnixNano(), image.Filename)
+	if saveErr := c.SaveFile(image, imagePath); saveErr != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to save image"})
+	}
+	assignment.Image = imagePath // Make sure this field exists in your model
+
+	// Save file to local directory
+	fileDir := "./uploads/files"
+	if err := os.MkdirAll(fileDir, os.ModePerm); err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create file directory"})
+	}
+	filePath := fmt.Sprintf("%s/%d_%s", fileDir, time.Now().UnixNano(), file.Filename)
+	if saveErr := c.SaveFile(file, filePath); saveErr != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to save file"})
+	}
+	assignment.File = filePath // Make sure this field exists in your model
+
+	// Save to DB
+	assignment.AssignmentDetails.UserID, _ = strconv.Atoi(userid)
+	assignment.AssignmentDetails.AdminID, _ = strconv.Atoi(adminid)
+	assignment.AssignmentDetails.DueDate = dueDateStr
+	assignment.AssignmentDetails.Status = "pending"
+	assignment.Comments = comments
+	assignment.AssignmentDetails.ID,_=strconv.Atoi(id)
+
+	if dbErr := database.DB.Create(&assignment).Error; dbErr != nil {
 		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Error uploading assignment"})
 	}
 
@@ -29,6 +89,7 @@ func AssignTostudents(c *fiber.Ctx) error{
 	if err:= c.BodyParser(&assignment);err!=nil{
 		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 	}
+    
 
 	var students []models.User
 
@@ -44,7 +105,8 @@ func AssignTostudents(c *fiber.Ctx) error{
 
 	 for _, student := range students {
 		assignments = append(assignments, models.Assignment{
-			UserID:    student.ID,
+			ID:        assignment.ID,
+			UserID:    student.UserID,
 			Email:     student.Email,
 			AdminID:   assignment.AdminID,
 			Task:      assignment.Task,
@@ -53,6 +115,7 @@ func AssignTostudents(c *fiber.Ctx) error{
 			Semester:  assignment.Semester,
 			CreatedAt: time.Now().Format(time.RFC3339),
 			UpdatedAt: time.Now().Format(time.RFC3339),
+			DueDate:   assignment.DueDate,
 		})
 	}
 
