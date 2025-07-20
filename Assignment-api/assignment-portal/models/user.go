@@ -1,8 +1,5 @@
 package models
 
-import (
-	
-)
 
 type User struct {
 	UserID       int    `json:"user_id"`

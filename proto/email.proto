@@ -18,3 +18,18 @@ message EmailResponse {
   string message = 1;
   bool success = 2;
 }
+
+service SendMaterials{
+  rpc SendMaterialsNotification (stream Materials) returns (MaterialEmbeddedConfirmation);
+}
+
+
+message Materials {
+  string filename = 1;     
+  bytes content = 2;
+}
+
+message MaterialEmbeddedConfirmation {
+  bool success = 1;
+  string message = 2;
+}

@@ -2,9 +2,9 @@ package controllers
 
 import (
 	"github.com/gofiber/fiber/v2"
-	"github.com/lokesh2201013/assignment-portal/models"
-	"github.com/lokesh2201013/assignment-portal/database" 
-	"github.com/lokesh2201013/assignment-portal/utils"    
+	"github.com/lokesh2201013/models"
+	"github.com/lokesh2201013/database" 
+	"github.com/lokesh2201013/utils"    
 	"log"
 )
 

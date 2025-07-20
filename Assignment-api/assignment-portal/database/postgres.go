@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/joho/godotenv"
-	"github.com/lokesh2201013/assignment-portal/models"
+	"github.com/lokesh2201013/models"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )

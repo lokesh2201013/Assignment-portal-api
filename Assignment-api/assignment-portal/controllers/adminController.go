@@ -3,12 +3,12 @@ package controllers
 import (
 	"net/http"
 	"github.com/gofiber/fiber/v2"
-	"github.com/lokesh2201013/assignment-portal/database"
-	"github.com/lokesh2201013/assignment-portal/models"
+	"github.com/lokesh2201013/database"
+	"github.com/lokesh2201013/models"
 	"strconv"
 	"strings"
 	"fmt"
-	pb "github.com/lokesh2201013/assignment-portal/proto"
+	pb "github.com/lokesh2201013/proto"
 )
 
 func GetAdminAssignments(c *fiber.Ctx) error {

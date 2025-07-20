@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package ragservice;
+
+option go_package = "./"; 
+
+service RAGService {
+  rpc UploadFile(FileUploadRequest) returns (FileUploadResponse);
+  rpc QueryWithContext(QueryRequest) returns (QueryResponse);
+}
+
+message FileUploadRequest {
+  string filename = 1;  
+  bytes content = 2;    
+}
+
+// Response message confirming upload and processing
+message FileUploadResponse {
+  bool message = 1; 
+  string error = 2;
+}
+
+message QueryRequest {
+  string query = 1;
+}
+
+message QueryResponse {
+  string answer = 1;
+}
+

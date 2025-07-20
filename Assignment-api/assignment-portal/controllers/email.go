@@ -5,8 +5,8 @@ import (
 	"fmt"
 	//"log"
 
-	"github.com/lokesh2201013/assignment-portal/models"
-	pb "github.com/lokesh2201013/assignment-portal/proto"
+	"github.com/lokesh2201013/models"
+	pb "github.com/lokesh2201013/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
