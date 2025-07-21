@@ -7,6 +7,7 @@ import (
 	//"io/ioutil"
 	//"fmt"
 	//"github.com/atgsgrouptest/genet-microservice/RAG-service/Logger"
+	"github.com/lokesh2201013/database"
 	"github.com/lokesh2201013/models"
 	pb "github.com/lokesh2201013/proto"
 	"google.golang.org/grpc"
@@ -15,11 +16,12 @@ import (
 	//"google.golang.org/grpc/status"
 	"google.golang.org/grpc/credentials/insecure"
 	//"go.uber.org/zap"
+	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"time"
-	"bytes"
-	"encoding/json"
+
 	"github.com/gofiber/fiber/v2"
 	//"mime/multipart"
 	//"github.com/atgsgrouptest/genet-microservice/RAG-service/embedding"
@@ -151,7 +153,6 @@ func GetHelp(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{"answer": res.Answer,})
 }
-
 func GetData(c *fiber.Ctx) error {
 	type QueryRequest struct {
 		Query string `json:"query"`
@@ -170,13 +171,16 @@ func GetData(c *fiber.Ctx) error {
 			"error": "Query cannot be empty",
 		})
 	}
-     assignment := models.Assignment{}
-     user := models.User{}
-     submit := models.SubmitAssignment{}
 
-    context := fmt.Sprintf("%+v %+v %+v", assignment, user, submit)
-    prompt := "I will give you a string of context... The database models are: " + context + ". Context: " + queryRequest.Query
+	// Prepare context from models
+	assignment := models.Assignment{}
+	user := models.User{}
+	submit := models.SubmitAssignment{}
 
+	context := fmt.Sprintf("%+v %+v %+v", assignment, user, submit)
+	prompt := "These are your DB models: " + context + ". Context: " + queryRequest.Query + ". Return a valid SELECT SQL query only."
+
+	// Call Ollama
 	payload := map[string]interface{}{
 		"model":  "llama3.1:8b",
 		"prompt": prompt,
@@ -186,14 +190,14 @@ func GetData(c *fiber.Ctx) error {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": fmt.Sprintf("Error marshaling llama payload: %v", err),
+			"error": "Error marshaling Ollama payload",
 		})
 	}
 
 	resp, err := http.Post("http://localhost:11434/api/generate", "application/json", bytes.NewReader(data))
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": fmt.Sprintf("Error calling Ollama API: %v", err),
+			"error": "Failed to call Ollama",
 		})
 	}
 	defer resp.Body.Close()
@@ -201,7 +205,7 @@ func GetData(c *fiber.Ctx) error {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": fmt.Sprintf("Ollama API error: %s", body),
+			"error": fmt.Sprintf("Ollama API error: %s", string(body)),
 		})
 	}
 
@@ -211,11 +215,59 @@ func GetData(c *fiber.Ctx) error {
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": fmt.Sprintf("Error decoding response: %v", err),
+			"error": "Failed to decode Ollama response",
 		})
 	}
 
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"query": result.Response,
-	})
+	// === Raw SQL Execution ===
+	rows, err := database.DB.Raw(result.Response).Rows()
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": fmt.Sprintf("SQL error: %v", err),
+			"query": result.Response,
+		})
+	}
+	defer rows.Close()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to get columns",
+		})
+	}
+
+	results := []map[string]interface{}{}
+
+	for rows.Next() {
+		// Create a slice of interface{}'s to represent each column,
+		// and a second slice to contain pointers to each item in the columns slice.
+		columnValues := make([]interface{}, len(columns))
+		columnPointers := make([]interface{}, len(columns))
+		for i := range columnValues {
+			columnPointers[i] = &columnValues[i]
+		}
+
+		// Scan the result into the column pointers...
+		if err := rows.Scan(columnPointers...); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": fmt.Sprintf("Row scan error: %v", err),
+			})
+		}
+
+		// Create map for this row
+		rowMap := map[string]interface{}{}
+		for i, colName := range columns {
+			val := columnValues[i]
+			// Convert []byte to string if needed
+			if b, ok := val.([]byte); ok {
+				rowMap[colName] = string(b)
+			} else {
+				rowMap[colName] = val
+			}
+		}
+
+		results = append(results, rowMap)
+	}
+
+	return c.Status(fiber.StatusOK).JSON(results)
 }
