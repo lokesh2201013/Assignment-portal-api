@@ -21,9 +21,11 @@ func AuthRoutes(app *fiber.App) {
 	app.Post("/admin/assign_assignments" ,middleware.AdminOnly(controllers.AssignTostudents))
      
 //Admin aid 
-    app.Post("/admin/aid/upload", middleware.AdminOnly(controllers.UploadFileHandler))
-    app.Get("/admin//aid/getdata", middleware.AdminOnly(controllers.GetData))
+    app.Post(("/admin/aid/video"),middleware.AdminOnly(controllers.UploadVideo))
+    app.Post("/admin/aid/uploadFile", middleware.AdminOnly(controllers.UploadFileHandler))
+    app.Get("/admin//aid/getData", middleware.AdminOnly(controllers.GetData))
 	//Use multipart form data for this request to send the files and images and comments
+	app.Get(("/user/aid/getVidData"),middleware.UserOnly(controllers.GetVidData))
 	app.Get("/user/aid/upload", middleware.UserOnly(controllers.GetHelp))
 	app.Post("/user/upload", middleware.UserOnly(controllers.UploadAssignment))
 	app.Get("/user/admins", controllers.GetAllAdmins)

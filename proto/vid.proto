@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package ragservice;
+
+option go_package = "./";
+
+service RAGService {
+  rpc UploadVidFile(FileUploadRequest) returns (FileUploadResponse);
+  rpc GetVidFileStream(VidRequest) returns (stream VideoChunk);
+}
+
+message FileUploadRequest {
+  string bucketId = 1;    
+}
+
+message FileUploadResponse {
+  bool message = 1; 
+  string error = 2;
+}
+
+message VidRequest {
+  string bucketID = 1;
+  string quality = 2;
+}
+
+message VideoChunk {
+  bytes data = 1; 
+}

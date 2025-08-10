@@ -153,6 +153,7 @@ func GetHelp(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{"answer": res.Answer,})
 }
+
 func GetData(c *fiber.Ctx) error {
 	type QueryRequest struct {
 		Query string `json:"query"`
@@ -270,4 +271,9 @@ func GetData(c *fiber.Ctx) error {
 	}
 
 	return c.Status(fiber.StatusOK).JSON(results)
+}
+
+func UploadVideo(c *fiber.Ctx)error{
+	video,err:=c.FormFile("video")
+    
 }
