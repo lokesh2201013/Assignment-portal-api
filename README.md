@@ -40,12 +40,12 @@ graph TB
     API_CLIENT --> GATEWAY
     
     GATEWAY --> ASSIGN
-    GATEWAY --> RAG
     GATEWAY --> EMAIL
     
     ASSIGN --> POSTGRES
     ASSIGN --> REDIS
-    ASSIGN -.->|gRPC| EMAIL
+    ASSIGN -->RAG
+    ASSIGN -.-> EMAIL
     
     RAG --> QDRANT
     RAG --> LLM
