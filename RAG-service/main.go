@@ -4,7 +4,7 @@ import (
 	//"log"
 	"os"
 
-	"github.com/atgsgrouptest/genet-microservice/RAG-service/logger"
+	"github.com/atgsgrouptest/genet-microservice/RAG-service/Logger"
 	"github.com/atgsgrouptest/genet-microservice/RAG-service/routes"
 	"go.uber.org/zap"
 	"fmt"
