@@ -94,6 +94,44 @@ graph TB
 │  └── Multi-Admin Support                                       │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
+```
+
+## Getting Started
+
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd assignment-portal
+   ```
+
+2. **Set up databases**
+   - PostgreSQL for Assignment-API and Email-Microservice
+   - Qdrant Vector Database for RAG-Service
+
+3. **Configure environment variables**
+   - Create `.env` files in each microservice directory
+   - Update with your database and service configurations
+
+4. **Install dependencies**
+   ```bash
+   # For each microservice
+   go mod download
+   ```
+
+5. **Run services**
+   ```bash
+   # Assignment-API
+   cd Assignment-api/assignment-portal
+   go run main.go
+
+   # RAG-Service
+   cd RAG-service
+   go run main.go
+
+   # Email-Microservice
+   cd email-microservice
+   go run main.go
+   ```
 
 ## 🏛️ Microservices Overview
 
@@ -682,66 +720,3 @@ GRPC_PORT=50051
 # Monitoring
 PROMETHEUS_PORT=9090
 ```
-
-## Getting Started
-
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd assignment-portal
-   ```
-
-2. **Set up databases**
-   - PostgreSQL for Assignment-API and Email-Microservice
-   - Qdrant Vector Database for RAG-Service
-
-3. **Configure environment variables**
-   - Create `.env` files in each microservice directory
-   - Update with your database and service configurations
-
-4. **Install dependencies**
-   ```bash
-   # For each microservice
-   go mod download
-   ```
-
-5. **Run services**
-   ```bash
-   # Assignment-API
-   cd Assignment-api/assignment-portal
-   go run main.go
-
-   # RAG-Service
-   cd RAG-service
-   go run main.go
-
-   # Email-Microservice
-   cd email-microservice
-   go run main.go
-   ```
-
-## Service Communication
-
-- **Assignment-API** communicates with **Email-Microservice** via gRPC for sending assignment notifications
-- **RAG-Service** operates independently but can be integrated with Assignment-API for AI assistance
-- All services expose HTTP REST APIs for external client communication
-
-## Monitoring and Metrics
-
-- **Email-Microservice** includes Prometheus metrics for monitoring email delivery rates, bounce rates, and system performance
-- Health check endpoints available on all services
-- Structured logging implemented across all microservices
-
-## Authentication & Authorization
-
-- JWT-based authentication implemented in Assignment-API and Email-Microservice
-- Role-based access control (Admin/User) in Assignment-API
-- Middleware for route protection and request validation
-
-## Error Handling
-
-All services implement comprehensive error handling with:
-- Structured error responses
-- Appropriate HTTP status codes
-- Detailed error logging
-- Graceful degradation for external service failures
