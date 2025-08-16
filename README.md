@@ -1,6 +1,63 @@
 # 🎓 Assignment Portal - Microservices Documentation
 
+
 This repository contains a comprehensive assignment management system built with **microservices architecture**. The system consists of three main microservices that work together to provide assignment management, RAG-based assistance, and email notification capabilities.
+
+## 🏗️ System Architecture Overview
+
+```mermaid
+graph TB
+    subgraph "Client Layer"
+        WEB[🌐 Web Frontend]
+        MOB[📱 Mobile App]
+        API_CLIENT[🔧 API Client]
+    end
+    
+    subgraph "API Gateway"
+        GATEWAY[🚪 Load Balancer/Gateway]
+    end
+    
+    subgraph "Microservices"
+        ASSIGN[📚 Assignment-API<br/>Port: 8080<br/>Auth & Assignment Management]
+        RAG[🤖 RAG-Service<br/>Port: 8001<br/>AI-Powered Assistance]
+        EMAIL[📧 Email-Service<br/>Port: 3000<br/>Notification System]
+    end
+    
+    subgraph "Data Layer"
+        POSTGRES[(🐘 PostgreSQL<br/>User & Assignment Data)]
+        QDRANT[(🔍 Qdrant Vector DB<br/>Document Embeddings)]
+        REDIS[(⚡ Redis<br/>Session Cache)]
+    end
+    
+    subgraph "External Services"
+        SMTP[📮 SMTP Server]
+        LLM[🧠 LLaMA/GPT API]
+        PROMETHEUS[📊 Prometheus]
+    end
+    
+    WEB --> GATEWAY
+    MOB --> GATEWAY
+    API_CLIENT --> GATEWAY
+    
+    GATEWAY --> ASSIGN
+    GATEWAY --> RAG
+    GATEWAY --> EMAIL
+    
+    ASSIGN --> POSTGRES
+    ASSIGN --> REDIS
+    ASSIGN -.->|gRPC| EMAIL
+    
+    RAG --> QDRANT
+    RAG --> LLM
+    
+    EMAIL --> POSTGRES
+    EMAIL --> SMTP
+    EMAIL --> PROMETHEUS
+    
+    style ASSIGN fill:#e1f5fe
+    style RAG fill:#f3e5f5
+    style EMAIL fill:#e8f5e8
+```
 
 ## ✨ Key Features
 
