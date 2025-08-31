@@ -18,6 +18,7 @@ import (
 
 	"github.com/lokesh2201013/email-service/database"
 	"github.com/lokesh2201013/email-service/routes"
+	  "github.com/joho/godotenv"
 )
 
 type emailServiceServer struct {
@@ -117,13 +118,18 @@ func startGRPCServer() {
 
 func main() {
 	runtime.GOMAXPROCS(2)
+	  err := godotenv.Load()
+    if err != nil {
+        log.Println("Warning: .env file not found, using system environment variables")
+        // Don't exit - continue with system env vars
+    }
 	database.InitDB()
 
 	go startGRPCServer()
-
+ 
 	app := fiber.New()
 	counter, _, histogram, summary := setupMetrics()
-
+    
 	setupMiddleware(app, counter, histogram, summary)
 	setupMetricsRoute(app)
 	routes.SetupRoutes(app)

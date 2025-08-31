@@ -2,7 +2,7 @@ package database
 
 import (
     "log"
-    "github.com/joho/godotenv"
+  //  "github.com/joho/godotenv"
     "gorm.io/driver/postgres"
     "gorm.io/gorm"
     "github.com/lokesh2201013/email-service/models"
@@ -13,10 +13,7 @@ var DB *gorm.DB
 
 func InitDB() {
     // Load environment variables from .env file
-    err := godotenv.Load()
-    if err != nil {
-        log.Fatal("Error loading .env file")
-    }
+   
 
     dsn := "host=" + os.Getenv("DB_HOST") + 
            " user=" + os.Getenv("DB_USER") + 

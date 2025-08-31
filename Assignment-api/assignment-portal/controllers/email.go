@@ -3,8 +3,10 @@ package controllers
 import (
 	"context"
 	"fmt"
+
 	//"log"
 
+	"github.com/google/uuid"
 	"github.com/lokesh2201013/models"
 	pb "github.com/lokesh2201013/proto"
 	"google.golang.org/grpc"
@@ -17,28 +19,30 @@ func assignTask(assignments []models.Assignment) (string, error) {
 	}
 
 	var emails []string
-	var task, branch, duedate string
-	var semester, adminID int
+	var task, branch, duedate,code string
+	var Semester int
+	var adminID uuid.UUID
 
 	for _, a := range assignments {
 		emails = append(emails, a.Email)
 		task = a.Task
 		branch = a.Branch
-		semester = a.Semester
+		Semester = a.Semester
+		code = a.SubjectCode
 		duedate = a.DueDate
 		adminID = a.AdminID
 	}
 
 	req := &pb.AssignmentEmailRequest{
 		Subject:    fmt.Sprintf("You have a task assigned by Admin %d", adminID),
-		Body:       fmt.Sprintf("You have been assigned a new task.\nTask: %s\nBranch: %s\nSemester: %d\nDue Date: %s", task, branch, semester, duedate),
+		Body:       fmt.Sprintf("You have been assigned a new task.\nTask: %s\nBranch: %s\nSemester: %d\nCourseCode: %s\nDue Date: %s", task, branch, Semester, code, duedate),
 		Recipients: emails,
 	}
 
-	return sendAssignmentNotification(req)
+	return SendAssignmentNotification(req)
 }
 
-func sendAssignmentNotification(req *pb.AssignmentEmailRequest) (string, error) {
+func SendAssignmentNotification(req *pb.AssignmentEmailRequest) (string, error) {
 	if req == nil {
 		return "", fmt.Errorf("email request is nil")
 	}

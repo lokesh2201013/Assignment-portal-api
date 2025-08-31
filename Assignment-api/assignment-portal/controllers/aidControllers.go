@@ -74,7 +74,7 @@ func UploadFileHandler(c *fiber.Ctx) error {
 			})
 		}
 
-		// Send to gRPC
+		
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
@@ -273,7 +273,7 @@ func GetData(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(results)
 }
 
-func UploadVideo(c *fiber.Ctx)error{
-	video,err:=c.FormFile("video")
+// func UploadVideo(c *fiber.Ctx)error{
+// 	video,err:=c.FormFile("video")
     
-}
+// }

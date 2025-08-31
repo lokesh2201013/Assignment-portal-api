@@ -34,7 +34,9 @@ func ConnectDB() {
 	if err := db.AutoMigrate(&models.User{}, &models.Assignment{}); err != nil {
 		log.Fatalf("AutoMigrate failed: %v\n", err)
 	}
-
+    if err := db.AutoMigrate(&models.SubmitAssignment{}); err != nil {
+    log.Fatalf("AutoMigrate for SubmitAssignment failed: %v\n", err)
+}
 	DB = db
 	log.Println("Connected to PostgreSQL using GORM")
 }

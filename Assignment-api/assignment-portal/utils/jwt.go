@@ -10,11 +10,11 @@ import (
 
 var secretKey = []byte("your-secret-key") 
 
-func GenerateJWT(userID int, role string) (string, error) {
+func GenerateJWT(userID string, role string) (string, error) {
 	claims := jwt.MapClaims{
 		"exp":  time.Now().Add(24 * time.Hour).Unix(),
 		"iss":  "assignment-portal",
-		"sub":  userID,
+		"userID":  userID,
 		"role": role,
 	}
 
