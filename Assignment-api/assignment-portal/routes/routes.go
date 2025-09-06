@@ -21,6 +21,7 @@ func AuthRoutes(app *fiber.App) {
     app.Post("/admin/assignments/reject", middleware.AdminOnly(controllers.RejectAssignment))
 	app.Post("/admin/assign_assignments" ,middleware.AdminOnly(controllers.AssignToStudents))
      
+	app.Post("/admin/aid/getPresignedURL", middleware.AdminOnly(controllers.GetPresignedURL))
     //Admin aid 
    // app.Post(("/admin/aid/video"),middleware.AdminOnly(controllers.UploadVideo))
     app.Post("/admin/aid/uploadFile", middleware.AdminOnly(controllers.UploadFileHandler))

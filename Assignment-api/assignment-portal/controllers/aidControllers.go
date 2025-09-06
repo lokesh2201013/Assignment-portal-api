@@ -3,13 +3,24 @@ package controllers
 import (
 	"context"
 	"fmt"
+
 	//"strings"
 
 	//"io/ioutil"
 	//"fmt"
 	//"github.com/atgsgrouptest/genet-microservice/RAG-service/Logger"
 	"github.com/lokesh2201013/database"
+	"github.com/lokesh2201013/models"
+	"github.com/lokesh2201013/search"
 	"github.com/lokesh2201013/utils"
+
+	//	"context"
+	//"fmt"
+	"log"
+	//"time"
+
+	"cloud.google.com/go/storage"
+	//"google.golang.org/api/option"
 	//"github.com/lokesh2201013/models"
 	pb "github.com/lokesh2201013/proto"
 	"google.golang.org/grpc"
@@ -309,3 +320,53 @@ submit := `submit_assignments {
 		"query": query,
 	})
 }
+func generateSignedURL(bucketName, objectName, serviceAccountKey string) (string, error) {
+	//ctx := context.Background()
+
+	// Signed URL options
+	opts := &storage.SignedURLOptions{
+		GoogleAccessID: "your-service-account@project-id.iam.gserviceaccount.com",
+		PrivateKey:     []byte(serviceAccountKey),
+		Method:         "PUT",
+		Expires:        time.Now().Add(15 * time.Minute),
+		ContentType:    "video/mp4", // restrict uploads to video/mp4
+	}
+
+	// Generate signed URL
+	url, err := storage.SignedURL(bucketName, objectName, opts)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate signed URL: %v", err)
+	}
+
+	return url, nil
+}
+func GetPresignedURL(c *fiber.Ctx) error {
+	var videoData models.Video
+	if err := c.BodyParser(&videoData); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid request body",
+		})
+	}
+	if videoData.Title == "" || videoData.Description == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Title and Description are required",
+		})
+	}
+	bucketName := "my-video-bucket"
+	objectName := "uploads/user123/video.mp4"
+
+	serviceAccountKey := `-----BEGIN PRIVATE KEY-----
+                               YOUR_PRIVATE_KEY_CONTENT
+                               -----END PRIVATE KEY-----`
+    
+	url, err := generateSignedURL(bucketName, objectName, serviceAccountKey)
+	if err != nil {
+		log.Fatalf("Error generating signed URL: %v", err)
+	}
+	search.IndexVideo(videoData)
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"presigned_url": url,
+	})
+
+}
+
