@@ -3,12 +3,14 @@ package controllers
 import (
 	"context"
 	"fmt"
+	//"strings"
 
 	//"io/ioutil"
 	//"fmt"
 	//"github.com/atgsgrouptest/genet-microservice/RAG-service/Logger"
 	"github.com/lokesh2201013/database"
-	"github.com/lokesh2201013/models"
+	"github.com/lokesh2201013/utils"
+	//"github.com/lokesh2201013/models"
 	pb "github.com/lokesh2201013/proto"
 	"google.golang.org/grpc"
 
@@ -173,13 +175,45 @@ func GetData(c *fiber.Ctx) error {
 		})
 	}
 
-	// Prepare context from models
-	assignment := models.Assignment{}
-	user := models.User{}
-	submit := models.SubmitAssignment{}
+assignment := `assignments {
+    assignment_id: uuid
+    email: string
+    admin_id: uuid
+    task: string
+    updated_at: string
+    due_date: string
+    branch: string
+    semester: int
+    subject_code: string
+}`
+
+user := `users {
+    user_id: string
+    name: string
+    email: string
+    password: string
+    role: string
+    branch: string
+    semester: int
+}`
+
+submit := `submit_assignments {
+    submission_id: uuid
+    assignment_id: uuid
+    user_id: uuid
+    status: string
+    file: string
+    image: string
+    comments: string
+    late_submission: bool
+    created_at: string
+}`
+
 
 	context := fmt.Sprintf("%+v %+v %+v", assignment, user, submit)
-	prompt := "These are your DB models: " + context + ". Context: " + queryRequest.Query + ". Return a valid SELECT SQL query only."
+	fmt.Println(assignment,user,submit)
+	prompt := "Return ONLY a raw SQL query without any explanations with ```sql fences. These are your DB models: " + context + ". Query: " + queryRequest.Query
+
 
 	// Call Ollama
 	payload := map[string]interface{}{
@@ -209,7 +243,7 @@ func GetData(c *fiber.Ctx) error {
 			"error": fmt.Sprintf("Ollama API error: %s", string(body)),
 		})
 	}
-
+      
 	var result struct {
 		Response string `json:"response"`
 	}
@@ -219,13 +253,13 @@ func GetData(c *fiber.Ctx) error {
 			"error": "Failed to decode Ollama response",
 		})
 	}
-
-	// === Raw SQL Execution ===
-	rows, err := database.DB.Raw(result.Response).Rows()
+	query := utils.CleanSQL(result.Response)
+	fmt.Println("Generated SQL Query:", query)
+	rows, err := database.DB.Raw(query).Rows()
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": fmt.Sprintf("SQL error: %v", err),
-			"query": result.Response,
+			"query": query,
 		})
 	}
 	defer rows.Close()
@@ -270,10 +304,8 @@ func GetData(c *fiber.Ctx) error {
 		results = append(results, rowMap)
 	}
 
-	return c.Status(fiber.StatusOK).JSON(results)
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"data": results,
+		"query": query,
+	})
 }
-
-// func UploadVideo(c *fiber.Ctx)error{
-// 	video,err:=c.FormFile("video")
-    
-// }

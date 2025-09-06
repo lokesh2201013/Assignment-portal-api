@@ -24,7 +24,7 @@ func AuthRoutes(app *fiber.App) {
     //Admin aid 
    // app.Post(("/admin/aid/video"),middleware.AdminOnly(controllers.UploadVideo))
     app.Post("/admin/aid/uploadFile", middleware.AdminOnly(controllers.UploadFileHandler))
-    app.Get("/admin//aid/getData", middleware.AdminOnly(controllers.GetData))
+    app.Get("/admin/aid/getData", middleware.AdminOnly(controllers.GetData))
 	//Use multipart form data for this request to send the files and images and comments
 	//app.Get(("/user/aid/getVidData"),middleware.UserOnly(controllers.GetVidData))
 	app.Get("/user/aid/upload", middleware.UserOnly(controllers.GetHelp))
