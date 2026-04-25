@@ -33,4 +33,7 @@ func AuthRoutes(app *fiber.App) {
 	app.Get("/user/admins", controllers.GetAllAdmins)
 	app.Get("/user/assignments/:user_id", middleware.UserOnly(controllers.GetUserAssignments))
 	app.Get("/user/assignments", middleware.UserOnly(controllers.GetUserAssignments))
+
+
+	app.Put("/aid/video/status", middleware.AdminOnly(controllers.UpdateVideoStatus))
 }

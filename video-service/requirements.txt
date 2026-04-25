@@ -5,3 +5,5 @@ pydantic
 sqlalchemy
 databases
 psycopg2-binary
+google-cloud-storage  
+aio_pika

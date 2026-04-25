@@ -352,8 +352,13 @@ func GetPresignedURL(c *fiber.Ctx) error {
 			"error": "Title and Description are required",
 		})
 	}
+	if(videoData.Title[len(videoData.Title)-4:]!=".mp4"){
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Only .mp4 files are allowed",
+		})
+	}
 	bucketName := "my-video-bucket"
-	objectName := "uploads/user123/video.mp4"
+	objectName :=  "raw/"+videoData.Title
 
 	serviceAccountKey := `-----BEGIN PRIVATE KEY-----
                                YOUR_PRIVATE_KEY_CONTENT
@@ -364,9 +369,20 @@ func GetPresignedURL(c *fiber.Ctx) error {
 		log.Fatalf("Error generating signed URL: %v", err)
 	}
 	search.IndexVideo(videoData)
+	videoData.Status="URLStage"	
+	database.DB.Create(&videoData)
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
 		"presigned_url": url,
+		"video_id":      videoData.ID.String(),
 	})
 
 }
 
+func UpdateVideoStatus(c *fiber.Ctx) error {
+	id := c.Params("id")
+	database.PublishMessage(id)
+	database.DB.Model(&models.Video{}).Where("id = ?", id).Update("status", "Processing")
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Video processing started",
+	})
+}
