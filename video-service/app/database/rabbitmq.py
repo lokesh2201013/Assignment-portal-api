@@ -24,7 +24,7 @@ async def handle_message(message: IncomingMessage):
             
 async def start_consumer():
     QUEUE_NAME = "task_queue"
-    RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@192.168.0.100:5672/")
+    RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@rabbitmq:5672/")
     
     try:
         connection = await connect_robust(RABBITMQ_URL)

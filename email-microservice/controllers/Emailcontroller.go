@@ -160,6 +160,16 @@ func SendEmail_Grpc(subject string, body string, Email []string) error {
 	
 	d := gomail.NewDialer(host, port, username, password)
 	
+	var sender models.Sender
+	if err := database.DB.Where("email = ? AND verified = ?", senderEmail, true).First(&sender).Error; err != nil {
+		logger.Warn("Sender not found or unverified in gRPC", zap.String("email", senderEmail))
+	}
+
+	var analytics models.Analytics
+	if sender.ID != 0 {
+		database.DB.Where("admin_name = ? AND sender_id = ?", sender.AdminName, sender.ID).First(&analytics)
+	}
+	
 	for _, to := range Email {
 		m := gomail.NewMessage()
 		m.SetHeader("From", senderEmail)
@@ -170,10 +180,25 @@ func SendEmail_Grpc(subject string, body string, Email []string) error {
 		err := d.DialAndSend(m)
 		if err != nil {
 			logger.Error("gRPC Error sending email", zap.Error(err), zap.String("recipient", to))
-			return err
+			if sender.ID != 0 {
+				handleEmailError(err, &analytics)
+			}
+			continue
+		}
+		
+		if sender.ID != 0 {
+			analytics.TotalEmails++
+			analytics.Delivered++
 		}
 		logger.Info("gRPC Email sent successfully", zap.String("recipient", to))
 	}
   
+	if sender.ID != 0 {
+		modifyAccumulatedEmail(sender.AdminName)
+		metricsWrapper := &metrics.AnalyticsWrapper{Analytics: analytics}
+		metricsWrapper.CalculateMetrics()
+		database.DB.Save(&analytics)
+	}
+
 	return nil
 }
