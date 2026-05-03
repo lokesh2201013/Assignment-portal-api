@@ -1,16 +1,16 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
 from pydantic import BaseModel
 from typing import Dict, List, Optional
 import json
 import asyncio
 from datetime import datetime
+import logging
 import uuid
 from app.models.models import ChatMessage, ChatStats, User, SystemMessage
 
-app = FastAPI(title="Stateless Chat API", description="A real-time chat API supporting up to 50 users")
+logger = logging.getLogger(__name__)
 
-# Pydantic models for API responses
-
+chat_router = APIRouter(tags=["Chat API"])
 
 # In-memory storage (stateless - resets on server restart)
 class ChatManager:
@@ -70,8 +70,8 @@ class ChatManager:
         if user_id in self.active_connections:
             try:
                 await self.active_connections[user_id].send_text(json.dumps(message))
-            except:
-                # Connection is broken, remove it
+            except Exception as e:
+                logger.warning(f"Failed to send message to user {user_id}: {e}")
                 self.disconnect(user_id)
     
     async def broadcast(self, message: dict, exclude_user: str = None):
@@ -81,7 +81,8 @@ class ChatManager:
             if user_id != exclude_user:
                 try:
                     await websocket.send_text(json.dumps(message))
-                except:
+                except Exception as e:
+                    logger.warning(f"Failed to broadcast to user {user_id}: {e}")
                     disconnected_users.append(user_id)
         
         # Clean up disconnected users
@@ -91,8 +92,8 @@ class ChatManager:
 # Initialize chat manager
 manager = ChatManager()
 
-@app.get("/", response_model=dict)
-async def root():
+@chat_router.get("/chat/info", response_model=dict)
+async def chat_root():
     """Root endpoint with API information"""
     return {
         "message": "FastAPI Chat API",
@@ -100,13 +101,13 @@ async def root():
         "endpoints": {
             "websocket": "/ws/{user_id}/{username}",
             "stats": "/api/stats",
-            "health": "/health"
+            "users": "/api/users"
         },
         "max_users": manager.max_users,
         "current_users": len(manager.active_connections)
     }
 
-@app.websocket("/ws/{user_id}/{username}")
+@chat_router.websocket("/ws/{user_id}/{username}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str, username: str):
     """WebSocket endpoint for real-time chat communication"""
     # Validate input
@@ -121,6 +122,8 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, username: str):
     connected = await manager.connect(websocket, user_id, username)
     if not connected:
         return
+    
+    logger.info(f"User {username} (ID: {user_id}) joined the chat.")
     
     try:
         while True:
@@ -154,25 +157,29 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, username: str):
                 })
                 
     except WebSocketDisconnect:
-        pass
+        logger.info(f"User {username} (ID: {user_id}) disconnected cleanly.")
     except json.JSONDecodeError:
+        logger.warning(f"Invalid JSON received from user {user_id}.")
         await websocket.close(code=1003, reason="Invalid JSON message")
     except Exception as e:
-        print(f"WebSocket error for user {user_id}: {e}")
-        await websocket.close(code=1011, reason="Internal server error")
+        logger.exception(f"WebSocket error for user {user_id}: {e}")
+        try:
+            await websocket.close(code=1011, reason="Internal server error")
+        except Exception:
+            pass
     finally:
         # Handle disconnection
-        username = manager.disconnect(user_id)
-        if username:
+        disc_username = manager.disconnect(user_id)
+        if disc_username:
             await manager.broadcast({
                 "type": "user_left",
                 "user_id": user_id,
-                "username": username,
+                "username": disc_username,
                 "timestamp": datetime.now().isoformat(),
                 "total_users": len(manager.active_connections)
             })
 
-@app.get("/api/stats", response_model=ChatStats)
+@chat_router.get("/api/stats", response_model=ChatStats)
 async def get_chat_stats():
     """Get current chat statistics and active users"""
     return ChatStats(
@@ -180,27 +187,27 @@ async def get_chat_stats():
         max_users=manager.max_users,
         users=[
             User(
-                user_id=user_id,
+                user_id=uid,
                 username=user_data["username"],
                 joined_at=user_data["joined_at"]
             )
-            for user_id, user_data in manager.users.items()
+            for uid, user_data in manager.users.items()
         ]
     )
 
-@app.get("/api/users", response_model=List[User])
+@chat_router.get("/api/users", response_model=List[User])
 async def get_active_users():
     """Get list of currently active users"""
     return [
         User(
-            user_id=user_id,
+            user_id=uid,
             username=user_data["username"],
             joined_at=user_data["joined_at"]
         )
-        for user_id, user_data in manager.users.items()
+        for uid, user_data in manager.users.items()
     ]
 
-@app.post("/api/broadcast")
+@chat_router.post("/api/broadcast")
 async def broadcast_system_message(message: str, sender: str = "System"):
     """Broadcast a system message to all connected users (admin endpoint)"""
     if not message.strip():
@@ -215,6 +222,7 @@ async def broadcast_system_message(message: str, sender: str = "System"):
     }
     
     await manager.broadcast(system_message)
+    logger.info(f"Admin broadcast sent successfully. Message: '{message}'")
     
     return {
         "status": "success",
@@ -222,36 +230,27 @@ async def broadcast_system_message(message: str, sender: str = "System"):
         "recipients": len(manager.active_connections)
     }
 
-@app.delete("/api/users/{user_id}")
-async def kick_user(user_id: str):
+@chat_router.delete("/api/users/{target_user_id}")
+async def kick_user(target_user_id: str):
     """Remove a user from the chat (admin endpoint)"""
-    if user_id not in manager.active_connections:
+    if target_user_id not in manager.active_connections:
         raise HTTPException(status_code=404, detail="User not found")
     
-    websocket = manager.active_connections[user_id]
-    username = manager.users.get(user_id, {}).get("username", "Unknown")
+    websocket = manager.active_connections[target_user_id]
+    username = manager.users.get(target_user_id, {}).get("username", "Unknown")
     
+    logger.info(f"User {username} (ID: {target_user_id}) is being kicked.")
     # Close the websocket connection
-    await websocket.close(code=1000, reason="Removed by administrator")
+    try:
+        await websocket.close(code=1000, reason="Removed by administrator")
+    except Exception as e:
+        logger.warning(f"Error attempting to close websocket for kicked user {target_user_id}: {e}")
     
-    # Clean up will be handled by the websocket disconnect handler
+    # Clean up will be handled by the websocket disconnect handler or we can do it now.
+    manager.disconnect(target_user_id)
     
     return {
         "status": "success",
         "message": f"User {username} has been removed",
-        "user_id": user_id
+        "user_id": target_user_id
     }
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "active_connections": len(manager.active_connections),
-        "max_users": manager.max_users
-    }
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -3,15 +3,21 @@ package controllers
 import (
 	"strings"
 	"time"
-     "fmt"
+	"os"
+	"strconv"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/lokesh2201013/email-service/database"
 	"github.com/lokesh2201013/email-service/metrics"
 	"github.com/lokesh2201013/email-service/models"
-	"gopkg.in/gomail.v2"
-	"os"
-	"strconv"
+	gomail "gopkg.in/gomail.v2"
+	"go.uber.org/zap"
 )
+
+func getLogger() *zap.Logger {
+	logger, _ := zap.NewProduction()
+	return logger
+}
 
 type EmailRequest struct {
 	From    string   `json:"from"`
@@ -21,11 +27,10 @@ type EmailRequest struct {
 	Format  string   `json:"format"`
 }
 
-//accumulate all total email in sender which have the same admin
+// accumulate all total email in sender which have the same admin
 func modifyAccumulatedEmail(adminName string) error {
 	var analytics []models.Analytics
 
-	
 	if err := database.DB.Where("admin_name = ?", adminName).Find(&analytics).Error; err != nil {
 		return err
 	}
@@ -35,7 +40,6 @@ func modifyAccumulatedEmail(adminName string) error {
 		totalAccumulatedEmails += record.AccumulatedEmail
 	}
 
-	
 	for i := range analytics {
 		analytics[i].AccumulatedEmail = totalAccumulatedEmails
 	}
@@ -46,25 +50,7 @@ func modifyAccumulatedEmail(adminName string) error {
 	return nil
 }
 
-
-/*func createEmailMessage(sender models.Sender, req *EmailRequest) (*gomail.Message, error) {
-	mail := gomail.NewMessage()
-	mail.SetHeader("From", sender.Email)
-	mail.SetHeader("To", req.To...)
-	mail.SetHeader("Subject", req.Subject)
-
-	switch req.Format {
-	case "html":
-		mail.SetBody("text/html", req.Body)
-	case "text":
-		mail.SetBody("text/plain", req.Body)
-	default:
-		return nil, fiber.NewError(400, "Invalid format")
-	}
-	return mail, nil
-}*/
-
-// handle the error for email fialed
+// handle the error for email failed
 func handleEmailError(err error, analytics *models.Analytics) error {
 	errMsg := err.Error()
 	if strings.Contains(errMsg, "550") || strings.Contains(errMsg, "551") || strings.Contains(errMsg, "554") || strings.Contains(errMsg, "553") {
@@ -72,43 +58,51 @@ func handleEmailError(err error, analytics *models.Analytics) error {
 	} else if strings.Contains(errMsg, "421") || strings.Contains(errMsg, "452") || strings.Contains(errMsg, "521") || strings.Contains(errMsg, "450") {
 		analytics.Rejected++
 	}
-	metricsWrapper := &metrics.AnalyticsWrapper{*analytics}
+	metricsWrapper := &metrics.AnalyticsWrapper{Analytics: *analytics}
 	metricsWrapper.CalculateMetrics()
 	database.DB.Save(&analytics)
 	return fiber.NewError(500, "Failed to send email: " + errMsg)
 }
 
 func SendEmail(c *fiber.Ctx) error {
+	logger := getLogger()
+	defer logger.Sync()
+
+	reqID := c.Locals("requestid")
+
 	var req EmailRequest
 	if err := c.BodyParser(&req); err != nil {
+		logger.Warn("Invalid request content", zap.Any("requestid", reqID))
 		return c.Status(400).JSON(fiber.Map{"error": "Invalid request content"})
 	}
 
-	// Query the Sender table to get the admin_name of the email in req.From
+	logger.Info("Initiating SendEmail request", zap.Any("requestid", reqID), zap.Strings("recipients", req.To))
+
 	var sender models.Sender
 	if err := database.DB.Where("email = ? AND verified = ?", req.From, true).First(&sender).Error; err != nil {
+		logger.Warn("Sender not found or unverified", zap.Any("requestid", reqID), zap.String("email", req.From))
 		return c.Status(400).JSON(fiber.Map{"error": "Sender not found"})
 	}
 
-	// Now, retrieve the admin details from the User table using the admin_name from sender
 	var admine models.User
 	if err := database.DB.Where("username = ?", sender.AdminName).First(&admine).Error; err != nil {
+		logger.Warn("Admin not found for sender", zap.Any("requestid", reqID))
 		return c.Status(400).JSON(fiber.Map{"error": "Admin not found"})
 	}
 
-	// Setup SMTP dialer
 	d := gomail.NewDialer(sender.SMTPHost, sender.SMTPPort, sender.Username, sender.AppPassword)
 
-	// Get the analytics record for the sender's admin
 	var analytics models.Analytics
 	if err := database.DB.Where("admin_name = ? AND sender_id = ?", sender.AdminName, sender.ID).First(&analytics).Error; err != nil {
+		logger.Warn("Analytics record not found", zap.Any("requestid", reqID))
 		return c.Status(404).JSON(fiber.Map{"error": "Analytics record not found"})
 	}
 
-	// Ensure we respect the rate limits
-	// Send emails one by one
 	for _, recipient := range req.To {
+		// Rate limiting simulated
+		logger.Debug("Sleeping for rate limit prevention", zap.Any("requestid", reqID), zap.String("recipient", recipient))
 		time.Sleep(time.Second)
+		
 		mail := gomail.NewMessage()
 		mail.SetHeader("From", sender.Email)
 		mail.SetHeader("To", recipient)
@@ -125,49 +119,61 @@ func SendEmail(c *fiber.Ctx) error {
 
 		err := d.DialAndSend(mail)
 		if err != nil {
+			logger.Error("Error sending isolated email", zap.Error(err), zap.String("recipient", recipient), zap.Any("requestid", reqID))
 			handleEmailError(err, &analytics)
 			continue
 		}
 
-		// Update analytics
 		analytics.TotalEmails++
 		analytics.Delivered++
+		logger.Info("Email sent successfully", zap.Any("requestid", reqID), zap.String("recipient", recipient))
 	}
 
-	// Update accumulated email count
 	modifyAccumulatedEmail(admine.Username)
 
-	// Calculate and update metrics
-	metricsWrapper := &metrics.AnalyticsWrapper{analytics}
+	metricsWrapper := &metrics.AnalyticsWrapper{Analytics: analytics}
 	metricsWrapper.CalculateMetrics()
 
-	// Save updated analytics
 	database.DB.Save(&analytics)
 
 	return c.JSON(fiber.Map{"message": "Emails processed successfully"})
 }
 
-func SendEmail_Grpc(subject string ,body string,Email []string) error {
-	port, err := strconv.Atoi(os.Getenv("SMTPPort"))
+func SendEmail_Grpc(subject string, body string, Email []string) error {
+	logger := getLogger()
+	defer logger.Sync()
+
+	portStr := os.Getenv("SMTPPort")
+	if portStr == "" {
+		portStr = "587" // default port
+	}
+	port, err := strconv.Atoi(portStr)
 	if err != nil {
+		logger.Error("Invalid SMTP port specified", zap.Error(err))
 		return err
 	}
 	
-	d := gomail.NewDialer(os.Getenv("SMTPHost"), port, os.Getenv("Name"), os.Getenv("AppPassword"))
+	host := os.Getenv("SMTPHost")
+	username := os.Getenv("Name")
+	password := os.Getenv("AppPassword")
+	senderEmail := os.Getenv("SenderEmail")
 	
-	fmt.Println("Working fine 6")
-	for _,to := range Email {
+	d := gomail.NewDialer(host, port, username, password)
+	
+	for _, to := range Email {
 		m := gomail.NewMessage()
-	m.SetHeader("From", os.Getenv("SenderEmail"))
-	m.SetHeader("To", to)
-	m.SetHeader("Subject", subject)
-	m.SetBody("text/plain", body)
-	err:=d.DialAndSend(m)
-	fmt.Println("Working fine 7")
-	if err != nil {
-		return err
+		m.SetHeader("From", senderEmail)
+		m.SetHeader("To", to)
+		m.SetHeader("Subject", subject)
+		m.SetBody("text/plain", body)
+		
+		err := d.DialAndSend(m)
+		if err != nil {
+			logger.Error("gRPC Error sending email", zap.Error(err), zap.String("recipient", to))
+			return err
+		}
+		logger.Info("gRPC Email sent successfully", zap.String("recipient", to))
 	}
-  }
   
 	return nil
 }

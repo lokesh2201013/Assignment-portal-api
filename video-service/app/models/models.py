@@ -1,4 +1,4 @@
-from Pydantic import BaseModel
+from pydantic import BaseModel
 from typing import List
 class Video(BaseModel):
     id:int
