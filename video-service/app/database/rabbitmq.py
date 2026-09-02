@@ -1,24 +1,41 @@
-from aio_pika import connect_robust, IncomingMessage
 import os
+import asyncio
+import logging
+from aio_pika import connect_robust, IncomingMessage
+
+logger = logging.getLogger(__name__)
 
 async def handle_message(message: IncomingMessage): 
     async with message.process():
-        video_id = int(message.body.decode())
-        print(f"Received task for video ID: {video_id}")
         try:
+            body_str = message.body.decode()
+            video_id = int(body_str)
+            logger.info(f"Received task for video ID: {video_id}")
+            
+            # Defer the synchronous blocking FFMPEG call to a separate thread
             from app.controllers.controllers import ProcessVideo
-            result = ProcessVideo(video_id, db)
-            print(f"Processing complete for video ID: {video_id}, result: {result}")
+            result = await asyncio.to_thread(ProcessVideo, video_id)
+            
+            logger.info(f"Processing complete for video ID: {video_id}, result: {result}")
+        except ValueError:
+            logger.error(f"Failed to parse video_id from message body: {message.body}")
         except Exception as e:
-            print(f"Error processing video ID {video_id}: {e}")
+            logger.exception(f"Error processing video task from message body: {message.body}. Error: {e}")
             
 async def start_consumer():
-    QUEUE_NAME="task_queue"
-    RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@192.168.0.100:5672/")
+    QUEUE_NAME = "task_queue"
+    RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@rabbitmq:5672/")
     
-    connection = await connect_robust(RABBITMQ_URL)
-    channel = await connection.channel()
-    queue = await channel.declare_queue(QUEUE_NAME, durable=True)
+    try:
+        connection = await connect_robust(RABBITMQ_URL)
+        channel = await connection.channel()
+        queue = await channel.declare_queue(QUEUE_NAME, durable=True)
 
-    print(f"🚀 Listening on RabbitMQ queue '{QUEUE_NAME}'...")
-    await queue.consume(lambda msg: handle_message(msg), no_ack=False)
+        logger.info(f"🚀 Listening on RabbitMQ queue '{QUEUE_NAME}'...")
+        await queue.consume(handle_message, no_ack=False)
+        
+        # Keep consumer running conceptually (if not managed by main task)
+        # Note: If called within uvicorn startup event, the connection stays open
+        # until closed during shutdown.
+    except Exception as e:
+        logger.error(f"Failed to start RabbitMQ consumer: {e}")

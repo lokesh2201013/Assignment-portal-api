@@ -1,25 +1,53 @@
 package main
 
 import (
-	//"fmt"
 	"fmt"
 	"log"
 	"net"
 	"time"
+	"os"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/valyala/fasthttp/fasthttpadaptor"
-     "runtime"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+    "runtime"
+
 	pb "github.com/lokesh2201013/email-service/proto"
 	"google.golang.org/grpc"
 
 	"github.com/lokesh2201013/email-service/database"
 	"github.com/lokesh2201013/email-service/routes"
-	  "github.com/joho/godotenv"
+	"github.com/joho/godotenv"
 )
+
+var Log *zap.Logger
+
+func initLogger() {
+	var err error
+	levelStr := strings.ToUpper(os.Getenv("LOG_LEVEL"))
+	var level zapcore.Level
+	switch levelStr {
+	case "DEBUG": level = zapcore.DebugLevel
+	case "INFO":  level = zapcore.InfoLevel
+	case "WARN":  level = zapcore.WarnLevel
+	case "ERROR": level = zapcore.ErrorLevel
+	default:      level = zapcore.InfoLevel
+	}
+
+	config := zap.NewProductionConfig()
+	config.Level = zap.NewAtomicLevelAt(level)
+
+	Log, err = config.Build()
+	if err != nil {
+		log.Fatalf("failed to initialize zap logger: %v", err)
+	}
+}
 
 type emailServiceServer struct {
 	pb.UnimplementedEmailServiceServer
@@ -77,8 +105,28 @@ func setupMetrics() (*prometheus.CounterVec, prometheus.Gauge, prometheus.Histog
 	return counter, gauge, histogram, summary
 }
 
+func setupLoggingMiddleware(app *fiber.App) {
+	app.Use(func(c *fiber.Ctx) error {
+		start := time.Now()
+		err := c.Next()
+		reqID := c.Locals("requestid")
+		if reqID == nil {
+			reqID = "none"
+		}
+		Log.Info("HTTP Request",
+			zap.String("timestamp", time.Now().Format("15:04:05")),
+			zap.Any("request_id", reqID),
+			zap.Int("status", c.Response().StatusCode()),
+			zap.Duration("duration", time.Since(start)),
+			zap.String("ip", c.IP()),
+			zap.String("method", c.Method()),
+			zap.String("path", c.OriginalURL()),
+		)
+		return err
+	})
+}
 
-func setupMiddleware(app *fiber.App, counter *prometheus.CounterVec, histogram prometheus.Histogram, summary prometheus.Summary) {
+func setupMetricsMiddleware(app *fiber.App, counter *prometheus.CounterVec, histogram prometheus.Histogram, summary prometheus.Summary) {
 	app.Use(func(c *fiber.Ctx) error {
 		start := time.Now()
 		counter.WithLabelValues(c.Method(), c.Path()).Inc()
@@ -102,37 +150,49 @@ func setupMetricsRoute(app *fiber.App) {
 func startGRPCServer() {
 	listener, err := net.Listen("tcp", ":50051")
 	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
+		Log.Fatal("Failed to listen for gRPC", zap.Error(err))
 	}
 
 	grpcServer := grpc.NewServer()
 	pb.RegisterEmailServiceServer(grpcServer, &emailServiceServer{})
 
-	log.Println("gRPC Email Service is running on port 50051")
+	Log.Info("gRPC Email Service is running on port 50051")
 	if err := grpcServer.Serve(listener); err != nil {
-		log.Fatalf("Failed to serve: %v", err)
+		Log.Fatal("Failed to serve gRPC", zap.Error(err))
 	}
-	fmt.Println("gRPC server stopped on port 50051")
-	grpcServer.Stop()
+	Log.Info("gRPC server stopped on port 50051")
 }
 
 func main() {
 	runtime.GOMAXPROCS(2)
-	  err := godotenv.Load()
-    if err != nil {
-        log.Println("Warning: .env file not found, using system environment variables")
-        // Don't exit - continue with system env vars
-    }
+	err := godotenv.Load()
+	
+	initLogger()
+	defer Log.Sync()
+
+	if err != nil {
+		Log.Warn("Warning: .env file not found, using system environment variables")
+	}
+
 	database.InitDB()
 
 	go startGRPCServer()
  
 	app := fiber.New()
+	
+	// Prepend RequestID Middleware
+	app.Use(requestid.New())
+	setupLoggingMiddleware(app)
+
 	counter, _, histogram, summary := setupMetrics()
-    
-	setupMiddleware(app, counter, histogram, summary)
+	setupMetricsMiddleware(app, counter, histogram, summary)
+	
 	setupMetricsRoute(app)
 	routes.SetupRoutes(app)
 
-	log.Fatal(app.Listen(":3000"))
+	port := ":3000"
+	Log.Info("HTTP Server listening", zap.String("port", port))
+	if err := app.Listen(port); err != nil {
+		Log.Fatal("Failed to start server", zap.Error(err))
+	}
 }

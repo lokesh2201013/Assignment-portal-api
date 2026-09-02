@@ -32,15 +32,12 @@ func SendFilesHTTP(c *fiber.Ctx) error {
 	}
 
 	files := form.File["files"]
-	//var allDocs []embedding.EmbeddedDocument
-
 	for _, file := range files {
 		 err := ProcessFile(file)
 		if err != nil {
 			logger.Log.Error("Failed to process file", zap.Error(err))
 			continue
 		}
-		//allDocs = append(allDocs, docs...)
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
@@ -54,7 +51,7 @@ func ProcessFile(file *multipart.FileHeader) ( error) {
 		return  fmt.Errorf("failed to embed file: %w", err)
 	}
 
-	err = embedding.StoreInQdrant(corpus, "g-corpus")
+	err = embedding.StoreInQdrant(corpus, "rag-corpus")
 	if err != nil {
 		return fmt.Errorf("failed to store in Qdrant: %w", err)
 	}

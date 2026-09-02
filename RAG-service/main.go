@@ -16,6 +16,7 @@ import (
 	"log"
 	"github.com/gofiber/fiber/v2"
 	"github.com/atgsgrouptest/genet-microservice/RAG-service/controllers"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 )
 
@@ -52,9 +53,10 @@ func main() {
 		AllowHeaders: "Origin, Content-Type, Accept",
 	}))
     
-	//app.Use(logger.New())
+	// Assign Request ID first
+	app.Use(requestid.New())
 	
-	// Register routes
+	// Register routes and custom logger
 	app.Use(logger.ZapLogger())
  
 	routes.UseRoutes(app)
