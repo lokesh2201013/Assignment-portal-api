@@ -1,22 +1,21 @@
 package repositories
 
 import (
-	"context"
-	"database/sql"
 	"errors"
 	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
 	"github.com/lokesh2201013/apperrors"
 	"github.com/lokesh2201013/models"
 )
 
 type UserRepository struct {
-	db *sql.DB
+	db *sqlx.DB
 }
 
-func NewUserRepository(db *sql.DB) *UserRepository {
+func NewUserRepository(db *sqlx.DB) *UserRepository {
 	return &UserRepository{db: db}
 }
 
@@ -24,7 +23,7 @@ func (r *UserRepository) Create(user *models.User) error {
 	if user.UserID == uuid.Nil {
 		user.UserID = uuid.New()
 	}
-	_, err := r.db.ExecContext(context.Background(), `INSERT INTO users (user_id, name, email, password, role, branch, semester) VALUES ($1, $2, $3, $4, $5, $6, $7)`, user.UserID, user.Name, user.Email, user.Password, user.Role, user.Branch, user.Semester)
+	_, err := r.db.NamedExec(`INSERT INTO users (user_id, name, email, password, role, branch, semester) VALUES (:user_id, :name, :email, :password, :role, :branch, :semester)`, map[string]interface{}{"user_id": user.UserID, "name": user.Name, "email": user.Email, "password": user.Password, "role": user.Role, "branch": user.Branch, "semester": user.Semester})
 	if err != nil {
 		return apperrors.Wrap(apperrors.ErrDatabase, "Could not create user", err)
 	}
@@ -33,11 +32,18 @@ func (r *UserRepository) Create(user *models.User) error {
 
 func (r *UserRepository) FindByEmail(email string) (models.User, error) {
 	var user models.User
-	err := r.db.QueryRowContext(context.Background(), `SELECT user_id, name, email, password, role, branch, semester FROM users WHERE email = $1`, email).Scan(&user.UserID, &user.Name, &user.Email, &user.Password, &user.Role, &user.Branch, &user.Semester)
+	rows, err := r.db.NamedQuery(`SELECT user_id, name, email, password, role, branch, semester FROM users WHERE email = :email`, map[string]interface{}{"email": email})
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return models.User{}, apperrors.Wrap(apperrors.ErrNotFound, "User not found", err)
+		return models.User{}, apperrors.Wrap(apperrors.ErrDatabase, "Could not fetch user", err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return models.User{}, apperrors.Wrap(apperrors.ErrDatabase, "Could not fetch user", err)
 		}
+		return models.User{}, apperrors.Wrap(apperrors.ErrNotFound, "User not found", errors.New("user not found"))
+	}
+	if err := rows.Scan(&user.UserID, &user.Name, &user.Email, &user.Password, &user.Role, &user.Branch, &user.Semester); err != nil {
 		return models.User{}, apperrors.Wrap(apperrors.ErrDatabase, "Could not fetch user", err)
 	}
 	return user, nil
@@ -45,7 +51,7 @@ func (r *UserRepository) FindByEmail(email string) (models.User, error) {
 
 func (r *UserRepository) FindAdmins() ([]models.User, error) {
 	var admins []models.User
-	rows, err := r.db.Query(`SELECT user_id, name, email, password, role, branch, semester FROM users WHERE role = $1`, "admin")
+	rows, err := r.db.NamedQuery(`SELECT user_id, name, email, password, role, branch, semester FROM users WHERE role = :role`, map[string]interface{}{"role": "admin"})
 	if err != nil {
 		return nil, apperrors.Wrap(apperrors.ErrDatabase, "Could not retrieve admins", err)
 	}
@@ -65,7 +71,7 @@ func (r *UserRepository) FindAdmins() ([]models.User, error) {
 
 func (r *UserRepository) FindStudents(branch string, semester int) ([]models.User, error) {
 	var users []models.User
-	rows, err := r.db.Query(`SELECT user_id, name, email, password, role, branch, semester FROM users WHERE role = $1 AND branch = $2 AND semester = $3`, "user", branch, semester)
+	rows, err := r.db.NamedQuery(`SELECT user_id, name, email, password, role, branch, semester FROM users WHERE role = :role AND branch = :branch AND semester = :semester`, map[string]interface{}{"role": "user", "branch": branch, "semester": semester})
 	if err != nil {
 		return nil, apperrors.Wrap(apperrors.ErrDatabase, "Could not fetch students", err)
 	}
@@ -89,12 +95,13 @@ func (r *UserRepository) FindByIDs(ids []uuid.UUID) ([]models.User, error) {
 		return users, nil
 	}
 	placeholders := make([]string, len(ids))
-	args := make([]interface{}, len(ids))
+	args := make(map[string]interface{}, len(ids))
 	for i, id := range ids {
-		placeholders[i] = "$" + strconv.Itoa(i+1)
-		args[i] = id
+		name := "user_id_" + strconv.Itoa(i)
+		placeholders[i] = ":" + name
+		args[name] = id
 	}
-	rows, err := r.db.Query(`SELECT user_id, name, email, password, role, branch, semester FROM users WHERE user_id IN (`+strings.Join(placeholders, ",")+")", args...)
+	rows, err := r.db.NamedQuery(`SELECT user_id, name, email, password, role, branch, semester FROM users WHERE user_id IN (`+strings.Join(placeholders, ",")+")", args)
 	if err != nil {
 		return nil, apperrors.Wrap(apperrors.ErrDatabase, "Could not fetch users", err)
 	}

@@ -3,7 +3,6 @@ package services
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +13,7 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/google/uuid"
+	"github.com/jmoiron/sqlx"
 	"github.com/lokesh2201013/apperrors"
 	"github.com/lokesh2201013/config"
 	"github.com/lokesh2201013/dto"
@@ -39,14 +39,14 @@ type messagePublisher interface {
 
 type AidService struct {
 	cfg       config.Config
-	db        *sql.DB
+	db        *sqlx.DB
 	videos    videoRepository
 	indexer   videoIndexer
 	publisher messagePublisher
 	http      *http.Client
 }
 
-func NewAidService(cfg config.Config, db *sql.DB, videos videoRepository, indexer videoIndexer, publisher messagePublisher) *AidService {
+func NewAidService(cfg config.Config, db *sqlx.DB, videos videoRepository, indexer videoIndexer, publisher messagePublisher) *AidService {
 	return &AidService{
 		cfg:       cfg,
 		db:        db,
@@ -138,7 +138,7 @@ func (s *AidService) QueryData(ctx context.Context, naturalLanguageQuery string)
 		return nil, generatedSQL, apperrors.New(apperrors.ErrForbidden, "Only read-only SELECT queries are allowed")
 	}
 
-	rows, err := s.db.QueryContext(ctx, generatedSQL)
+	rows, err := s.db.QueryxContext(ctx, generatedSQL)
 	if err != nil {
 		return nil, generatedSQL, apperrors.Wrap(apperrors.ErrValidation, "SQL query could not be executed", err)
 	}

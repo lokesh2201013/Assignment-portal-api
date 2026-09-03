@@ -1,17 +1,17 @@
 package database
 
 import (
-	"database/sql"
 	"log/slog"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jmoiron/sqlx"
 	"github.com/lokesh2201013/config"
 )
 
-var DB *sql.DB
+var DB *sqlx.DB
 
-func ConnectDB(cfg config.Config, logger *slog.Logger) (*sql.DB, error) {
-	db, err := sql.Open("pgx", cfg.DatabaseDSN)
+func ConnectDB(cfg config.Config, logger *slog.Logger) (*sqlx.DB, error) {
+	db, err := sqlx.Open("pgx", cfg.DatabaseDSN)
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +30,7 @@ func ConnectDB(cfg config.Config, logger *slog.Logger) (*sql.DB, error) {
 	return db, nil
 }
 
-func createTables(db *sql.DB) error {
+func createTables(db *sqlx.DB) error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS users (user_id UUID PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, password TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user', branch TEXT, semester INTEGER)`,
 		`CREATE TABLE IF NOT EXISTS assignments (assignment_id UUID PRIMARY KEY, email TEXT NOT NULL, admin_id UUID NOT NULL, task TEXT NOT NULL, created_at TEXT, updated_at TEXT, due_date TEXT, branch TEXT NOT NULL, semester INTEGER NOT NULL, subject_code TEXT NOT NULL)`,
