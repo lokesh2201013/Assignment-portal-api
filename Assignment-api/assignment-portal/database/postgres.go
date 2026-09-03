@@ -1,45 +1,46 @@
 package database
 
 import (
-	"log"
-	"os"
+	"database/sql"
+	"log/slog"
 
-	"github.com/joho/godotenv"
-	"github.com/lokesh2201013/models"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
+	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/lokesh2201013/config"
 )
 
-var DB *gorm.DB
+var DB *sql.DB
 
-func ConnectDB() {
-	// Load environment variables
-	if err := godotenv.Load(); err != nil {
-		log.Println("Warning: No .env file found")
-	}
-
-	dsn := "host=" + os.Getenv("DB_HOST") +
-		" user=" + os.Getenv("DB_USER") +
-		" password=" + os.Getenv("DB_PASSWORD") +
-		" dbname=" + os.Getenv("DB_NAME") +
-		" port=" + os.Getenv("DB_PORT") +
-		" sslmode=disable"
-
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+func ConnectDB(cfg config.Config, logger *slog.Logger) (*sql.DB, error) {
+	db, err := sql.Open("pgx", cfg.DatabaseDSN)
 	if err != nil {
-		log.Fatalf("Failed to connect to db: %v\n", err)
+		return nil, err
 	}
 
-	// Migrate all models in one call
-	if err := db.AutoMigrate(&models.User{}, &models.Assignment{}); err != nil {
-		log.Fatalf("AutoMigrate failed: %v\n", err)
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, err
 	}
-    if err := db.AutoMigrate(&models.SubmitAssignment{}); err != nil {
-    log.Fatalf("AutoMigrate for SubmitAssignment failed: %v\n", err)
-}
-   if err := db.AutoMigrate(&models.Video{}); err != nil {
-    log.Fatalf("AutoMigrate for Video failed: %v\n", err)
-}
+	if err := createTables(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	DB = db
-	log.Println("Connected to PostgreSQL using GORM")
+	logger.Info("connected to PostgreSQL")
+	return db, nil
+}
+
+func createTables(db *sql.DB) error {
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS users (user_id UUID PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, password TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user', branch TEXT, semester INTEGER)`,
+		`CREATE TABLE IF NOT EXISTS assignments (assignment_id UUID PRIMARY KEY, email TEXT NOT NULL, admin_id UUID NOT NULL, task TEXT NOT NULL, created_at TEXT, updated_at TEXT, due_date TEXT, branch TEXT NOT NULL, semester INTEGER NOT NULL, subject_code TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS submit_assignments (submission_id UUID PRIMARY KEY, assignment_id UUID NOT NULL, user_id UUID NOT NULL, status TEXT NOT NULL DEFAULT 'pending', file TEXT, image TEXT, comments TEXT, late_submission BOOLEAN, created_at TEXT)`,
+		`CREATE TABLE IF NOT EXISTS videos (id UUID PRIMARY KEY, url TEXT, title TEXT NOT NULL, tags JSONB, status TEXT, description TEXT)`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			return err
+		}
+	}
+	return nil
 }

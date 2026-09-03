@@ -4,36 +4,39 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/lokesh2201013/controllers"
 	"github.com/lokesh2201013/middlewares"
-
+	"github.com/lokesh2201013/utils"
+	"log/slog"
 )
 
-func AuthRoutes(app *fiber.App) {
-	app.Post("/signup", controllers.Register)
-	app.Post("/login", controllers.Login)
+type Controllers struct {
+	Users       *controllers.UserController
+	Assignments *controllers.AssignmentController
+	Aid         *controllers.AidController
+	JWT         *utils.JWTManager
+	Logger      *slog.Logger
+}
 
-	app.Use(middleware.AuthMiddleware())
+func AuthRoutes(app *fiber.App, handlers Controllers) {
+	app.Post("/signup", handlers.Users.Register)
+	app.Post("/login", handlers.Users.Login)
 
-    app.Get("/admin/getassignments", middleware.AdminOnly(controllers.GetAdminAssignments))
-	app.Get("/admin/submissions", middleware.AdminOnly(controllers.GetSubmittedAssignments))
+	app.Use(middleware.AuthMiddleware(handlers.JWT, handlers.Logger))
 
-// Admin: Accept/reject assignments (no changes needed here)
-    app.Post("/admin/assignments/accept", middleware.AdminOnly(controllers.AcceptAssignment))
-    app.Post("/admin/assignments/reject", middleware.AdminOnly(controllers.RejectAssignment))
-	app.Post("/admin/assign_assignments" ,middleware.AdminOnly(controllers.AssignToStudents))
-     
-	app.Post("/admin/aid/getPresignedURL", middleware.AdminOnly(controllers.GetPresignedURL))
-    //Admin aid 
-   // app.Post(("/admin/aid/video"),middleware.AdminOnly(controllers.UploadVideo))
-    app.Post("/admin/aid/uploadFile", middleware.AdminOnly(controllers.UploadFileHandler))
-    app.Get("/admin/aid/getData", middleware.AdminOnly(controllers.GetData))
-	//Use multipart form data for this request to send the files and images and comments
-	//app.Get(("/user/aid/getVidData"),middleware.UserOnly(controllers.GetVidData))
-	app.Get("/user/aid/upload", middleware.UserOnly(controllers.GetHelp))
-	app.Post("/user/upload", middleware.UserOnly(controllers.UploadAssignment))
-	app.Get("/user/admins", controllers.GetAllAdmins)
-	app.Get("/user/assignments/:user_id", middleware.UserOnly(controllers.GetUserAssignments))
-	app.Get("/user/assignments", middleware.UserOnly(controllers.GetUserAssignments))
+	app.Get("/admin/getassignments", middleware.AdminOnly(handlers.Assignments.GetAdminAssignments))
+	app.Get("/admin/submissions", middleware.AdminOnly(handlers.Assignments.GetSubmittedAssignments))
 
+	app.Post("/admin/assignments/accept", middleware.AdminOnly(handlers.Assignments.AcceptAssignment))
+	app.Post("/admin/assignments/reject", middleware.AdminOnly(handlers.Assignments.RejectAssignment))
+	app.Post("/admin/assign_assignments", middleware.AdminOnly(handlers.Assignments.AssignToStudents))
 
-	app.Put("/aid/video/status", middleware.AdminOnly(controllers.UpdateVideoStatus))
+	app.Post("/admin/aid/getPresignedURL", middleware.AdminOnly(handlers.Aid.GetPresignedURL))
+	app.Post("/admin/aid/uploadFile", middleware.AdminOnly(handlers.Aid.UploadFileHandler))
+	app.Get("/admin/aid/getData", middleware.AdminOnly(handlers.Aid.GetData))
+	app.Get("/user/aid/upload", middleware.UserOnly(handlers.Aid.GetHelp))
+	app.Post("/user/upload", middleware.UserOnly(handlers.Assignments.UploadAssignment))
+	app.Get("/user/admins", handlers.Users.GetAllAdmins)
+	app.Get("/user/assignments/:user_id", middleware.UserOnly(handlers.Assignments.GetUserAssignments))
+	app.Get("/user/assignments", middleware.UserOnly(handlers.Assignments.GetUserAssignments))
+
+	app.Put("/aid/video/status", middleware.AdminOnly(handlers.Aid.UpdateVideoStatus))
 }

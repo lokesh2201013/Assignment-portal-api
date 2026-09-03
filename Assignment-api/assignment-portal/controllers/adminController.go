@@ -1,196 +1,108 @@
 package controllers
 
 import (
-	"fmt"
-	"net/http"
-	//"strconv"
+	"context"
+	"log/slog"
+	"mime/multipart"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
-	"github.com/lokesh2201013/database"
+	"github.com/lokesh2201013/apperrors"
+	"github.com/lokesh2201013/dto"
 	"github.com/lokesh2201013/models"
-	pb "github.com/lokesh2201013/proto"
 )
 
-func GetAdminAssignments(c *fiber.Ctx) error {
-	var assignments []models.Assignment
+type AssignmentService interface {
+	ListAssignments(filters dto.AssignmentFilters) ([]models.Assignment, error)
+	AssignToStudents(ctx context.Context, adminID uuid.UUID, req dto.AssignmentCreateRequest) (map[string]interface{}, error)
+	SubmitAssignment(data dto.AssignmentSubmissionUpload) (models.SubmitAssignment, error)
+	SaveSubmissionFiles(image *multipart.FileHeader, file *multipart.FileHeader, imageDir string, fileDir string) (string, string, error)
+	UpdateSubmissions(ctx context.Context, userIDs []uuid.UUID, status string, reason string) error
+	GetUserAssignments(userID uuid.UUID) ([]models.SubmitAssignment, error)
+	GetPendingSubmissions() ([]models.SubmitAssignment, error)
+}
 
-	branch := c.Query("branch")
-	semester := c.Query("semester")
-	subjectCode := c.Query("subject_code")
+type AssignmentController struct {
+	service  AssignmentService
+	logger   *slog.Logger
+	imageDir string
+	fileDir  string
+}
 
-	query := database.DB.Model(&models.Assignment{})
-	if branch != "" {
-		query = query.Where("branch = ?", branch)
-	}
-	if semester != "" {
-		query = query.Where("semester = ?", semester)
-	}
+func NewAssignmentController(service AssignmentService, logger *slog.Logger, imageDir string, fileDir string) *AssignmentController {
+	return &AssignmentController{service: service, logger: logger, imageDir: imageDir, fileDir: fileDir}
+}
 
-	if subjectCode != "" {
-		query = query.Where("subject_code = ?", subjectCode)
-	}
-
-	if err := query.Find(&assignments).Error; err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Error fetching assignments"})
+func (h *AssignmentController) GetAdminAssignments(c *fiber.Ctx) error {
+	assignments, err := h.service.ListAssignments(dto.AssignmentFilters{
+		Branch:      c.Query("branch"),
+		Semester:    c.Query("semester"),
+		SubjectCode: c.Query("subject_code"),
+	})
+	if err != nil {
+		return respondError(c, h.logger, err)
 	}
 	return c.JSON(assignments)
 }
 
-
-func AcceptAssignment(c *fiber.Ctx) error {
-	idList := c.Query("id")
-	if idList == "" {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "No student IDs provided"})
+func (h *AssignmentController) AcceptAssignment(c *fiber.Ctx) error {
+	userIDs, err := parseUUIDList(c.Query("id"))
+	if err != nil {
+		return respondError(c, h.logger, err)
 	}
-
-	idStrs := strings.Split(idList, ",")
-	studentIDs := make([]string, 0, len(idStrs))
-	for _, s := range idStrs {
-		studentIDs = append(studentIDs, strings.TrimSpace(s))
+	if err := h.service.UpdateSubmissions(c.UserContext(), userIDs, "accepted", ""); err != nil {
+		return respondError(c, h.logger, err)
 	}
-	
-	// First, find the submitted assignments that match the user IDs.
-	var submittedAssignments []models.SubmitAssignment
-	if err := database.DB.Where("user_id IN ?", studentIDs).Find(&submittedAssignments).Error; err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Error getting submitted assignments"})
-	}
-
-	if len(submittedAssignments) == 0 {
-		return c.Status(http.StatusNotFound).JSON(fiber.Map{"error": "No submitted assignments found for these users"})
-	}
-
-	
-	assignmentIDs := make([]string, 0)
-	for _, submission := range submittedAssignments {
-		assignmentIDs = append(assignmentIDs, submission.AssignmentID.String())
-	}
-	
-	// Now, update the main Assignment records' status.
-	if err := database.DB.Model(&models.SubmitAssignment{}).
-		Where("user_id IN ?", studentIDs).
-		Update("status", "accepted").Error; err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Error updating assignment status"})
-	}
-	
-	// Fetch user info for email notification.
-	var UserInfo []models.User
-	if err := database.DB.Where("user_id IN ?", studentIDs).Find(&UserInfo).Error; err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Error getting user info for emails"})
-	}
-
-	var emails []string
-	for _, user := range UserInfo {
-		emails = append(emails, user.Email)
-	}
-
-	req := &pb.AssignmentEmailRequest{
-		Subject:    fmt.Sprintf("Assignment Accepted"),
-		Body:       fmt.Sprintf("Your assignment has been Accepted"),
-		Recipients: emails,
-	}
-
-	// This function is assumed to be defined elsewhere.
-	SendAssignmentNotification(req)
-
 	return c.JSON(fiber.Map{"message": "Assignments Accepted"})
 }
 
-
-
-func RejectAssignment(c *fiber.Ctx) error {
-// Get comma-separated student IDs from form
-	idList := c.Query("id")
-	reason := c.Query("reason")
-	if idList == "" {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "No student IDs provided"})
+func (h *AssignmentController) RejectAssignment(c *fiber.Ctx) error {
+	userIDs, err := parseUUIDList(c.Query("id"))
+	if err != nil {
+		return respondError(c, h.logger, err)
 	}
-
-	idStrs := strings.Split(idList, ",")
-	studentIDs := make([]string, 0, len(idStrs))
-	for _, s := range idStrs {
-		studentIDs = append(studentIDs, strings.TrimSpace(s))
+	if err := h.service.UpdateSubmissions(c.UserContext(), userIDs, "rejected", c.Query("reason")); err != nil {
+		return respondError(c, h.logger, err)
 	}
-	
-	// First, find the submitted assignments that match the user IDs.
-	var submittedAssignments []models.SubmitAssignment
-	if err := database.DB.Where("user_id IN ?", studentIDs).Find(&submittedAssignments).Error; err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Error getting submitted assignments"})
-	}
-
-	if len(submittedAssignments) == 0 {
-		return c.Status(http.StatusNotFound).JSON(fiber.Map{"error": "No submitted assignments found for these users"})
-	}
-
-	
-	assignmentIDs := make([]string, 0)
-	for _, submission := range submittedAssignments {
-		assignmentIDs = append(assignmentIDs, submission.AssignmentID.String())
-	}
-	
-	// Now, update the main Assignment records' status.
-	if err := database.DB.Model(&models.SubmitAssignment{}).
-		Where("user_id IN ?", studentIDs).
-		Update("status", "rejected").Error; err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Error updating assignment status"})
-	}
-	
-	// Fetch user info for email notification.
-	var UserInfo []models.User
-	if err := database.DB.Where("user_id IN ?", studentIDs).Find(&UserInfo).Error; err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Error getting user info for emails"})
-	}
-
-	var emails []string
-	for _, user := range UserInfo {
-		emails = append(emails, user.Email)
-	}
-
-	req := &pb.AssignmentEmailRequest{
-		Subject:    fmt.Sprintf("Assignment Rejected"),
-		Body:       fmt.Sprintf("Your assignment has been Rejected due to %s", reason),
-		Recipients: emails,
-	}
-
-	// This function is assumed to be defined elsewhere.
-	SendAssignmentNotification(req)
-
 	return c.JSON(fiber.Map{"message": "Assignments Rejected"})
 }
 
-func GetUserAssignments(c *fiber.Ctx) error {
-	requserID:=c.Params("user_id")
-      
-	if requserID==""{
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "No userID sent"})
+func (h *AssignmentController) GetUserAssignments(c *fiber.Ctx) error {
+	userID, err := uuid.Parse(c.Params("user_id"))
+	if err != nil {
+		return respondError(c, h.logger, apperrors.New(apperrors.ErrValidation, "Invalid userID"))
 	}
-    
-      userID,err:=uuid.Parse(requserID)
-
-	  if err!=nil{
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Invalid userID"})
-	  }
-    
-
-	var assignments []models.SubmitAssignment
-
-	if err := database.DB.Where("user_id = ?", userID).Find(&assignments).Error; err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Error fetching user assignments"})
+	assignments, err := h.service.GetUserAssignments(userID)
+	if err != nil {
+		return respondError(c, h.logger, err)
 	}
 	return c.JSON(assignments)
 }
 
-func GetSubmittedAssignments(c *fiber.Ctx) error {
-	assignmentId := c.Query("assignment_id")
-	if assignmentId == "" {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "No assignment ID provided"})
+func (h *AssignmentController) GetSubmittedAssignments(c *fiber.Ctx) error {
+	if c.Query("assignment_id") == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "No assignment ID provided"})
 	}
-
-	var submissions []models.SubmitAssignment
-	if err := database.DB.Where("status = ?", "pending").Find(&submissions).Error; err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Error fetching submissions"})
+	submissions, err := h.service.GetPendingSubmissions()
+	if err != nil {
+		return respondError(c, h.logger, err)
 	}
-
 	return c.JSON(submissions)
+}
+
+func parseUUIDList(idList string) ([]uuid.UUID, error) {
+	if strings.TrimSpace(idList) == "" {
+		return nil, apperrors.New(apperrors.ErrValidation, "No student IDs provided")
+	}
+	parts := strings.Split(idList, ",")
+	ids := make([]uuid.UUID, 0, len(parts))
+	for _, part := range parts {
+		id, err := uuid.Parse(strings.TrimSpace(part))
+		if err != nil {
+			return nil, apperrors.New(apperrors.ErrValidation, "Invalid student ID")
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
