@@ -1,61 +1,53 @@
-import os
-import sys
 import asyncio
 import logging
-import json
 import uuid
-from contextvars import ContextVar
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 import uvicorn
 
-# Request ID Context Var
-request_id_context: ContextVar[str] = ContextVar("request_id", default="-")
-
-class JSONFormatter(logging.Formatter):
-    def format(self, record):
-        log_record = {
-            "time": self.formatTime(record, self.datefmt),
-            "name": record.name,
-            "level": record.levelname,
-            "message": record.getMessage(),
-            "request_id": request_id_context.get()
-        }
-        if record.exc_info:
-            log_record["exception"] = self.formatException(record.exc_info)
-        return json.dumps(log_record)
-
-# Set up global logging configuration
-handler = logging.StreamHandler(sys.stdout)
-handler.setFormatter(JSONFormatter())
-logging.root.handlers = [handler]
-logging.root.setLevel(logging.INFO)
-
-logger = logging.getLogger(__name__)
-
+from app.config import get_settings
+from app.database.postgres import get_database
 from app.database.rabbitmq import start_consumer
-from app.database.database import init_db_pool
+from app.exceptions import AppError
+from app.logging_setup import configure_logging, request_id_context
 from app.routes.routes import router as video_router
 from app.controllers.chatcontrollers import chat_router
 
-# Lifespan context manager for startup and shutdown events
+settings = get_settings()
+configure_logging(settings.log_level)
+logger = logging.getLogger(__name__)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Initializing Video Service...")
-    init_db_pool()
-    # Start RabbitMQ consumer in the background
-    consumer_task = asyncio.create_task(start_consumer())
-    logger.info("RabbitMQ Consumer task started.")
-    
+    db = get_database()
+    db.connect()
+
+    consumer_task = None
+    if settings.start_worker:
+        consumer_task = asyncio.create_task(start_consumer())
+        logger.info("RabbitMQ Consumer task started.")
+
     yield
-    
+
     logger.info("Shutting down Video Service...")
-    consumer_task.cancel()
-    
+    if consumer_task:
+        consumer_task.cancel()
+        try:
+            await consumer_task
+        except asyncio.CancelledError:
+            pass
+
+    db.close()
+    logger.info("Video Service shutdown complete.")
+
 
 app = FastAPI(title="Video Processing & Chat Service", lifespan=lifespan)
+
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -65,26 +57,47 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         response.headers["X-Request-ID"] = req_id
         return response
 
+
 app.add_middleware(RequestIDMiddleware)
 
-# Setup CORS, optional but standard
+# CORS middleware using configured origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origin_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
+# Global Exception Handlers for AppError and generic unhandled Exception
+@app.exception_handler(AppError)
+async def app_error_handler(request: Request, exc: AppError):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": exc.error_type, "message": exc.message},
+    )
+
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    logger.exception(f"Unhandled server error on {request.method} {request.url.path}: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"error": "internal", "message": "An unexpected error occurred"},
+    )
+
+
 # Include routers
 app.include_router(video_router)
 app.include_router(chat_router)
+
 
 @app.get("/health")
 async def combined_health_check():
     """General health check for the entire service"""
     return {"status": "ok", "service": "video-service"}
 
-if __name__ == '__main__':
-    # When running directly use the module form for uvicorn
+
+if __name__ == "__main__":
     uvicorn.run("app.app:app", host="0.0.0.0", port=5000, reload=True)
