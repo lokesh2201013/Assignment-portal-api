@@ -14,6 +14,7 @@ import (
 
 	"github.com/atgsgrouptest/genet-microservice/RAG-service/config"
 	"github.com/atgsgrouptest/genet-microservice/RAG-service/controllers"
+	"github.com/atgsgrouptest/genet-microservice/RAG-service/database"
 	"github.com/atgsgrouptest/genet-microservice/RAG-service/middlewares"
 	pb "github.com/atgsgrouptest/genet-microservice/RAG-service/proto"
 	"github.com/atgsgrouptest/genet-microservice/RAG-service/repositories"
@@ -25,6 +26,13 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/recover"
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/joho/godotenv"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"google.golang.org/grpc"
 )
 
@@ -53,6 +61,21 @@ func main() {
 	}))
 	slog.SetDefault(logger)
 
+	traceProvider, err := initJaegerTracerProvider("rag-service")
+	if err != nil {
+		logger.Warn("failed to initialize Jaeger tracer; continuing without export", slog.Any("error", err))
+		traceProvider = sdktrace.NewTracerProvider()
+	}
+	otel.SetTracerProvider(traceProvider)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := traceProvider.Shutdown(ctx); err != nil {
+			logger.Warn("trace provider shutdown failed", slog.Any("error", err))
+		}
+	}()
+
 	logger.Info("Starting RAG Microservice",
 		slog.String("http_port", cfg.Port),
 		slog.String("grpc_port", cfg.GRPCPort),
@@ -74,11 +97,19 @@ func main() {
 
 	// 5. Dependency Injection: Repositories & Clients
 	vectorRepo := repositories.NewQdrantRepository(cfg.QdrantURL, httpClient, logger)
+	db, err := database.ConnectDB(cfg.DatabaseDSN, logger)
+	if err != nil {
+		logger.Error("Failed to connect to PostgreSQL metadata database", slog.Any("error", err))
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	metaRepo := repositories.NewPostgresMetadataRepository(db, logger)
 	aiClient := services.NewOllamaClient(cfg.OllamaURL, cfg.EmbeddingModel, cfg.LLMModel, httpClient, logger)
 	chunker := services.NewDocumentChunker(cfg.ChunkSize, cfg.ChunkOverlap)
 
 	// 6. Services & Controllers
-	ragService := services.NewRAGService(vectorRepo, aiClient, chunker, cfg.QdrantCollection, cfg.TopK, logger)
+	ragService := services.NewRAGService(vectorRepo, metaRepo, aiClient, chunker, cfg.QdrantCollection, cfg.DefaultTenantID, cfg.TopK, logger)
 	httpController := controllers.NewRAGHTTPController(ragService, logger, cfg.MaxFileSize)
 	grpcServerImpl := controllers.NewRAGGRPCServer(ragService, logger)
 
@@ -89,7 +120,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler()))
 	pb.RegisterRAGServiceServer(grpcServer, grpcServerImpl)
 
 	go func() {
@@ -114,6 +145,7 @@ func main() {
 	})
 
 	app.Use(recover.New())
+	app.Use(requestTracingMiddleware())
 	app.Use(requestid.New())
 	app.Use(middlewares.SecurityHeaders())
 	app.Use(cors.New(cors.Config{
@@ -132,6 +164,7 @@ func main() {
 	app.Use(middlewares.SlogRequestLogger(logger))
 
 	// 9. Register HTTP Routes
+	registerAPIDocs(app)
 	routes.RegisterRoutes(app, httpController)
 
 	// 10. Start HTTP Server in Goroutine
@@ -165,3 +198,57 @@ func main() {
 
 	logger.Info("All servers stopped. Exiting.")
 }
+
+func initJaegerTracerProvider(serviceName string) (*sdktrace.TracerProvider, error) {
+	endpoint := strings.TrimSpace(os.Getenv("JAEGER_ENDPOINT"))
+	if endpoint == "" {
+		endpoint = strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
+	}
+	if endpoint == "" {
+		endpoint = "http://localhost:4318"
+	}
+
+	exporter, err := otlptracehttp.New(context.Background(),
+		otlptracehttp.WithInsecure(),
+		otlptracehttp.WithEndpointURL(strings.TrimRight(endpoint, "/")+"/v1/traces"),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	serviceResource := resource.NewWithAttributes("", attribute.String("service.name", serviceName))
+	return sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithResource(serviceResource),
+	), nil
+}
+
+func requestTracingMiddleware() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		tracer := otel.Tracer("rag-service/http")
+		parentContext := otel.GetTextMapPropagator().Extract(c.UserContext(), fiberHeaderCarrier{ctx: c})
+		ctx, span := tracer.Start(parentContext, c.Method()+" "+c.Path())
+		c.SetUserContext(ctx)
+		defer span.End()
+
+		if err := c.Next(); err != nil {
+			span.RecordError(err)
+			return err
+		}
+
+		span.SetAttributes(
+			attribute.String("http.method", c.Method()),
+			attribute.String("http.route", c.Route().Path),
+			attribute.Int("http.status_code", c.Response().StatusCode()),
+		)
+		return nil
+	}
+}
+
+type fiberHeaderCarrier struct {
+	ctx *fiber.Ctx
+}
+
+func (h fiberHeaderCarrier) Get(key string) string { return h.ctx.Get(key) }
+func (h fiberHeaderCarrier) Set(key, value string) { h.ctx.Set(key, value) }
+func (h fiberHeaderCarrier) Keys() []string        { return []string{"traceparent", "tracestate", "baggage"} }

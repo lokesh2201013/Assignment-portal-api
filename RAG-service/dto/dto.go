@@ -13,6 +13,7 @@ type QueryRequest struct {
 	Query          string `json:"query"`
 	TenantID       string `json:"tenant_id,omitempty"`
 	CollectionName string `json:"collection_name,omitempty"`
+	IncludeSources bool   `json:"include_sources,omitempty"`
 }
 
 // Validate checks that the query is not empty and within reasonable bounds.
@@ -32,9 +33,10 @@ func (r *QueryRequest) Validate() error {
 
 // QueryResponse contains the LLM's context-augmented response and tenant context.
 type QueryResponse struct {
-	Answer         string `json:"answer"`
-	TenantID       string `json:"tenant_id,omitempty"`
-	CollectionName string `json:"collection_name,omitempty"`
+	Answer         string                   `json:"answer"`
+	TenantID       string                   `json:"tenant_id,omitempty"`
+	CollectionName string                   `json:"collection_name,omitempty"`
+	Sources        []models.SourceReference `json:"sources,omitempty"`
 }
 
 // UploadResponse indicates the result of uploading and embedding documents.

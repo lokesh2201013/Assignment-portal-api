@@ -17,7 +17,11 @@ import (
 type RAGService interface {
 	ProcessDocument(ctx context.Context, tenantID, collectionName, filename string, content []byte) (*models.RAGDocument, error)
 	ProcessQuery(ctx context.Context, tenantID, collectionName, query string) (string, error)
+	ProcessQueryWithSources(ctx context.Context, tenantID, collectionName, query string) (string, []models.SourceReference, error)
 	ListDocuments(ctx context.Context, tenantID, collectionName string) ([]models.RAGDocument, error)
+	ListCollections(ctx context.Context, tenantID string) ([]models.RAGCollection, error)
+	DeleteDocument(ctx context.Context, tenantID, collectionName, documentID string) error
+	UpdateDocumentStatus(ctx context.Context, tenantID, documentID, status string) error
 }
 
 type ragServiceImpl struct {
@@ -179,9 +183,14 @@ func (s *ragServiceImpl) ProcessDocument(ctx context.Context, tenantID, collecti
 
 // ProcessQuery performs semantic search with tenant isolation and asks the LLM for an answer.
 func (s *ragServiceImpl) ProcessQuery(ctx context.Context, tenantID, collectionName, query string) (string, error) {
+	answer, _, err := s.ProcessQueryWithSources(ctx, tenantID, collectionName, query)
+	return answer, err
+}
+
+func (s *ragServiceImpl) ProcessQueryWithSources(ctx context.Context, tenantID, collectionName, query string) (string, []models.SourceReference, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
-		return "", apperrors.New(apperrors.ErrValidation, "Query cannot be empty")
+		return "", nil, apperrors.New(apperrors.ErrValidation, "Query cannot be empty")
 	}
 
 	tenantID = strings.TrimSpace(tenantID)
@@ -194,35 +203,63 @@ func (s *ragServiceImpl) ProcessQuery(ctx context.Context, tenantID, collectionN
 		collectionName = s.defaultCollection
 	}
 
-	// 1. Embed query
 	queryVector, err := s.aiClient.GetEmbedding(ctx, query)
 	if err != nil {
-		return "", fmt.Errorf("failed to generate query embedding: %w", err)
+		return "", nil, fmt.Errorf("failed to generate query embedding: %w", err)
 	}
 
-	// 2. Semantic search in vector store with tenant payload filter
 	searchResults, err := s.vectorRepo.SearchPoints(ctx, collectionName, queryVector, s.topK, tenantID)
 	if err != nil {
-		return "", fmt.Errorf("vector search failed: %w", err)
+		return "", nil, fmt.Errorf("vector search failed: %w", err)
 	}
 
-	// 3. Assemble retrieved context
 	var contextBuilder strings.Builder
+	var sources []models.SourceReference
 	for _, result := range searchResults {
-		if result.Content != "" {
-			contextBuilder.WriteString(result.Content)
-			contextBuilder.WriteString("\n")
+		if result.Content == "" {
+			continue
+		}
+		contextBuilder.WriteString(result.Content)
+		contextBuilder.WriteString("\n")
+
+		filename := ""
+		if payloadName, ok := result.Payload["filename"].(string); ok {
+			filename = payloadName
+		}
+		documentID := ""
+		if payloadDocID, ok := result.Payload["document_id"].(string); ok {
+			documentID = payloadDocID
+		}
+		chunkIndex := 0
+		if payloadChunk, ok := result.Payload["chunk_index"].(float64); ok {
+			chunkIndex = int(payloadChunk)
+		} else if payloadChunk, ok := result.Payload["chunk_index"].(int); ok {
+			chunkIndex = payloadChunk
+		}
+
+		sources = append(sources, models.SourceReference{
+			DocumentID: documentID,
+			Filename:   filename,
+			ChunkIndex: chunkIndex,
+			Score:      result.Score,
+		})
+	}
+	if len(searchResults) == 0 {
+		queryTerms := strings.FieldsFunc(query, func(r rune) bool { return strings.ContainsRune(" ,;.!?\n\t", r) })
+		for _, term := range queryTerms {
+			if term != "" {
+				contextBuilder.WriteString(term)
+				contextBuilder.WriteString(" ")
+			}
 		}
 	}
 	contextText := contextBuilder.String()
-
-	// 4. Generate answer via LLM
 	answer, err := s.aiClient.GenerateAnswer(ctx, contextText, query)
 	if err != nil {
-		return "", fmt.Errorf("LLM answer generation failed: %w", err)
+		return "", nil, fmt.Errorf("LLM answer generation failed: %w", err)
 	}
 
-	return answer, nil
+	return answer, sources, nil
 }
 
 // ListDocuments returns all documents stored for a tenant in PostgreSQL.
@@ -238,4 +275,41 @@ func (s *ragServiceImpl) ListDocuments(ctx context.Context, tenantID, collection
 
 	collectionName = strings.TrimSpace(collectionName)
 	return s.metaRepo.GetDocuments(ctx, tenantID, collectionName)
+}
+
+func (s *ragServiceImpl) ListCollections(ctx context.Context, tenantID string) ([]models.RAGCollection, error) {
+	if s.metaRepo == nil {
+		return []models.RAGCollection{}, nil
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		tenantID = s.defaultTenantID
+	}
+	return s.metaRepo.ListCollections(ctx, tenantID)
+}
+
+func (s *ragServiceImpl) DeleteDocument(ctx context.Context, tenantID, collectionName, documentID string) error {
+	if s.metaRepo == nil {
+		return apperrors.New(apperrors.ErrDatabase, "Metadata repository is not configured")
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		tenantID = s.defaultTenantID
+	}
+	return s.metaRepo.DeleteDocument(ctx, tenantID, collectionName, documentID)
+}
+
+func (s *ragServiceImpl) UpdateDocumentStatus(ctx context.Context, tenantID, documentID, status string) error {
+	if s.metaRepo == nil {
+		return apperrors.New(apperrors.ErrDatabase, "Metadata repository is not configured")
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	if tenantID == "" {
+		tenantID = s.defaultTenantID
+	}
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return apperrors.New(apperrors.ErrValidation, "Status cannot be empty")
+	}
+	return s.metaRepo.UpdateDocumentStatus(ctx, tenantID, documentID, status)
 }

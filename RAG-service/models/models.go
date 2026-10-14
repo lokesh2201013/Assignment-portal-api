@@ -67,3 +67,11 @@ type RAGChunk struct {
 	Metadata   string    `db:"metadata" json:"metadata,omitempty"`
 	CreatedAt  time.Time `db:"created_at" json:"created_at"`
 }
+
+// SourceReference captures the document chunk that informed an answer.
+type SourceReference struct {
+	DocumentID string  `json:"document_id,omitempty"`
+	Filename   string  `json:"filename,omitempty"`
+	ChunkIndex int     `json:"chunk_index,omitempty"`
+	Score      float64 `json:"score,omitempty"`
+}

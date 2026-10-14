@@ -58,6 +58,21 @@ func (m *MockMetadataRepository) GetDocuments(ctx context.Context, tenantID, col
 	return args.Get(0).([]models.RAGDocument), args.Error(1)
 }
 
+func (m *MockMetadataRepository) ListCollections(ctx context.Context, tenantID string) ([]models.RAGCollection, error) {
+	args := m.Called(ctx, tenantID)
+	return args.Get(0).([]models.RAGCollection), args.Error(1)
+}
+
+func (m *MockMetadataRepository) DeleteDocument(ctx context.Context, tenantID, collectionName, documentID string) error {
+	args := m.Called(ctx, tenantID, collectionName, documentID)
+	return args.Error(0)
+}
+
+func (m *MockMetadataRepository) UpdateDocumentStatus(ctx context.Context, tenantID, documentID, status string) error {
+	args := m.Called(ctx, tenantID, documentID, status)
+	return args.Error(0)
+}
+
 func (m *MockMetadataRepository) GetChunksByDocument(ctx context.Context, tenantID, docID string) ([]models.RAGChunk, error) {
 	args := m.Called(ctx, tenantID, docID)
 	return args.Get(0).([]models.RAGChunk), args.Error(1)
@@ -162,7 +177,7 @@ func TestRAGService_ProcessQuery(t *testing.T) {
 		query := "What is RAG?"
 		mockEmbedding := []float64{0.5, 0.6}
 		mockResults := []models.SearchResult{
-			{Content: "RAG stands for Retrieval-Augmented Generation.", Score: 0.95, TenantID: "tenant_xyz"},
+			{Content: "RAG stands for Retrieval-Augmented Generation.", Score: 0.95, TenantID: "tenant_xyz", Payload: map[string]interface{}{"filename": "rag-guide.txt", "document_id": "doc-1", "chunk_index": 1}},
 		}
 
 		ai.On("GetEmbedding", mock.Anything, query).Return(mockEmbedding, nil)
@@ -175,5 +190,30 @@ func TestRAGService_ProcessQuery(t *testing.T) {
 
 		ai.AssertExpectations(t)
 		repo.AssertExpectations(t)
+	})
+
+	t.Run("query returns citation metadata for each source", func(t *testing.T) {
+		repo := new(MockVectorRepository)
+		meta := new(MockMetadataRepository)
+		ai := new(MockAIClient)
+		svc := NewRAGService(repo, meta, ai, chunker, "test-coll", "tenant_xyz", 5, logger)
+
+		query := "What is RAG?"
+		mockEmbedding := []float64{0.5, 0.6}
+		mockResults := []models.SearchResult{
+			{Content: "RAG stands for Retrieval-Augmented Generation.", Score: 0.97, TenantID: "tenant_xyz", Payload: map[string]interface{}{"filename": "rag-guide.txt", "document_id": "doc-1", "chunk_index": 2}},
+		}
+
+		ai.On("GetEmbedding", mock.Anything, query).Return(mockEmbedding, nil)
+		repo.On("SearchPoints", mock.Anything, "test-coll", mockEmbedding, 5, "tenant_xyz").Return(mockResults, nil)
+		ai.On("GenerateAnswer", mock.Anything, "RAG stands for Retrieval-Augmented Generation.\n", query).Return("It combines retrieval with generative AI.", nil)
+
+		answer, sources, err := svc.ProcessQueryWithSources(context.Background(), "tenant_xyz", "test-coll", query)
+		assert.NoError(t, err)
+		assert.Equal(t, "It combines retrieval with generative AI.", answer)
+		assert.Len(t, sources, 1)
+		assert.Equal(t, "rag-guide.txt", sources[0].Filename)
+		assert.Equal(t, "doc-1", sources[0].DocumentID)
+		assert.Equal(t, 2, sources[0].ChunkIndex)
 	})
 }

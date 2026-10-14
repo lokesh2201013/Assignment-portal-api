@@ -20,19 +20,39 @@ func NewUserRepository(db *sqlx.DB) *UserRepository {
 }
 
 func (r *UserRepository) Create(user *models.User) error {
+	return r.CreateInTenant(user, "default")
+}
+
+func (r *UserRepository) CreateInTenant(user *models.User, tenantID string) error {
 	if user.UserID == uuid.Nil {
 		user.UserID = uuid.New()
 	}
-	_, err := r.db.NamedExec(`INSERT INTO users (user_id, name, email, password, role, branch, semester) VALUES (:user_id, :name, :email, :password, :role, :branch, :semester)`, map[string]interface{}{"user_id": user.UserID, "name": user.Name, "email": user.Email, "password": user.Password, "role": user.Role, "branch": user.Branch, "semester": user.Semester})
+	user.TenantID = tenantID
+	tx, err := r.db.Beginx()
 	if err != nil {
+		return apperrors.Wrap(apperrors.ErrDatabase, "Could not create user", err)
+	}
+	if _, err := tx.NamedExec(`INSERT INTO users (user_id, tenant_id, name, email, password, role, branch, semester) VALUES (:user_id, :tenant_id, :name, :email, :password, :role, :branch, :semester)`, map[string]interface{}{"user_id": user.UserID, "tenant_id": tenantID, "name": user.Name, "email": user.Email, "password": user.Password, "role": user.Role, "branch": user.Branch, "semester": user.Semester}); err != nil {
+		tx.Rollback()
+		return apperrors.Wrap(apperrors.ErrDatabase, "Could not create user", err)
+	}
+	if _, err := tx.Exec(`INSERT INTO tenant_memberships (tenant_id, user_id, role, status) VALUES ($1, $2, $3, 'verified')`, tenantID, user.UserID, user.Role); err != nil {
+		tx.Rollback()
+		return apperrors.Wrap(apperrors.ErrDatabase, "Could not create tenant membership", err)
+	}
+	if err := tx.Commit(); err != nil {
 		return apperrors.Wrap(apperrors.ErrDatabase, "Could not create user", err)
 	}
 	return nil
 }
 
 func (r *UserRepository) FindByEmail(email string) (models.User, error) {
+	return r.FindByEmailInTenant(email, "default")
+}
+
+func (r *UserRepository) FindByEmailInTenant(email string, tenantID string) (models.User, error) {
 	var user models.User
-	rows, err := r.db.NamedQuery(`SELECT user_id, name, email, password, role, branch, semester FROM users WHERE email = :email`, map[string]interface{}{"email": email})
+	rows, err := r.db.NamedQuery(`SELECT u.user_id, u.tenant_id, u.name, u.email, u.password, m.role, u.branch, u.semester FROM users u JOIN tenant_memberships m ON m.tenant_id = u.tenant_id AND m.user_id = u.user_id WHERE u.tenant_id = :tenant_id AND u.email = :email AND m.status = 'verified'`, map[string]interface{}{"tenant_id": tenantID, "email": email})
 	if err != nil {
 		return models.User{}, apperrors.Wrap(apperrors.ErrDatabase, "Could not fetch user", err)
 	}
@@ -43,22 +63,26 @@ func (r *UserRepository) FindByEmail(email string) (models.User, error) {
 		}
 		return models.User{}, apperrors.Wrap(apperrors.ErrNotFound, "User not found", errors.New("user not found"))
 	}
-	if err := rows.Scan(&user.UserID, &user.Name, &user.Email, &user.Password, &user.Role, &user.Branch, &user.Semester); err != nil {
+	if err := rows.Scan(&user.UserID, &user.TenantID, &user.Name, &user.Email, &user.Password, &user.Role, &user.Branch, &user.Semester); err != nil {
 		return models.User{}, apperrors.Wrap(apperrors.ErrDatabase, "Could not fetch user", err)
 	}
 	return user, nil
 }
 
 func (r *UserRepository) FindAdmins() ([]models.User, error) {
+	return r.FindAdminsInTenant("default")
+}
+
+func (r *UserRepository) FindAdminsInTenant(tenantID string) ([]models.User, error) {
 	var admins []models.User
-	rows, err := r.db.NamedQuery(`SELECT user_id, name, email, password, role, branch, semester FROM users WHERE role = :role`, map[string]interface{}{"role": "admin"})
+	rows, err := r.db.NamedQuery(`SELECT u.user_id, u.tenant_id, u.name, u.email, u.password, m.role, u.branch, u.semester FROM users u JOIN tenant_memberships m ON m.tenant_id = u.tenant_id AND m.user_id = u.user_id WHERE u.tenant_id = :tenant_id AND m.role = :role AND m.status = 'verified'`, map[string]interface{}{"tenant_id": tenantID, "role": "admin"})
 	if err != nil {
 		return nil, apperrors.Wrap(apperrors.ErrDatabase, "Could not retrieve admins", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var user models.User
-		if err := rows.Scan(&user.UserID, &user.Name, &user.Email, &user.Password, &user.Role, &user.Branch, &user.Semester); err != nil {
+		if err := rows.Scan(&user.UserID, &user.TenantID, &user.Name, &user.Email, &user.Password, &user.Role, &user.Branch, &user.Semester); err != nil {
 			return nil, apperrors.Wrap(apperrors.ErrDatabase, "Could not retrieve admins", err)
 		}
 		admins = append(admins, user)
@@ -70,15 +94,19 @@ func (r *UserRepository) FindAdmins() ([]models.User, error) {
 }
 
 func (r *UserRepository) FindStudents(branch string, semester int) ([]models.User, error) {
+	return r.FindStudentsInTenant("default", branch, semester)
+}
+
+func (r *UserRepository) FindStudentsInTenant(tenantID string, branch string, semester int) ([]models.User, error) {
 	var users []models.User
-	rows, err := r.db.NamedQuery(`SELECT user_id, name, email, password, role, branch, semester FROM users WHERE role = :role AND branch = :branch AND semester = :semester`, map[string]interface{}{"role": "user", "branch": branch, "semester": semester})
+	rows, err := r.db.NamedQuery(`SELECT u.user_id, u.tenant_id, u.name, u.email, u.password, m.role, u.branch, u.semester FROM users u JOIN tenant_memberships m ON m.tenant_id = u.tenant_id AND m.user_id = u.user_id WHERE u.tenant_id = :tenant_id AND m.role = :role AND m.status = 'verified' AND u.branch = :branch AND u.semester = :semester`, map[string]interface{}{"tenant_id": tenantID, "role": "user", "branch": branch, "semester": semester})
 	if err != nil {
 		return nil, apperrors.Wrap(apperrors.ErrDatabase, "Could not fetch students", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var user models.User
-		if err := rows.Scan(&user.UserID, &user.Name, &user.Email, &user.Password, &user.Role, &user.Branch, &user.Semester); err != nil {
+		if err := rows.Scan(&user.UserID, &user.TenantID, &user.Name, &user.Email, &user.Password, &user.Role, &user.Branch, &user.Semester); err != nil {
 			return nil, apperrors.Wrap(apperrors.ErrDatabase, "Could not fetch students", err)
 		}
 		users = append(users, user)
@@ -90,25 +118,30 @@ func (r *UserRepository) FindStudents(branch string, semester int) ([]models.Use
 }
 
 func (r *UserRepository) FindByIDs(ids []uuid.UUID) ([]models.User, error) {
+	return r.FindByIDsInTenant("default", ids)
+}
+
+func (r *UserRepository) FindByIDsInTenant(tenantID string, ids []uuid.UUID) ([]models.User, error) {
 	var users []models.User
 	if len(ids) == 0 {
 		return users, nil
 	}
 	placeholders := make([]string, len(ids))
-	args := make(map[string]interface{}, len(ids))
+	args := make(map[string]interface{}, len(ids)+1)
 	for i, id := range ids {
 		name := "user_id_" + strconv.Itoa(i)
 		placeholders[i] = ":" + name
 		args[name] = id
 	}
-	rows, err := r.db.NamedQuery(`SELECT user_id, name, email, password, role, branch, semester FROM users WHERE user_id IN (`+strings.Join(placeholders, ",")+")", args)
+	args["tenant_id"] = tenantID
+	rows, err := r.db.NamedQuery(`SELECT u.user_id, u.tenant_id, u.name, u.email, u.password, m.role, u.branch, u.semester FROM users u JOIN tenant_memberships m ON m.tenant_id = u.tenant_id AND m.user_id = u.user_id WHERE u.tenant_id = :tenant_id AND m.status = 'verified' AND u.user_id IN (`+strings.Join(placeholders, ",")+")", args)
 	if err != nil {
 		return nil, apperrors.Wrap(apperrors.ErrDatabase, "Could not fetch users", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var user models.User
-		if err := rows.Scan(&user.UserID, &user.Name, &user.Email, &user.Password, &user.Role, &user.Branch, &user.Semester); err != nil {
+		if err := rows.Scan(&user.UserID, &user.TenantID, &user.Name, &user.Email, &user.Password, &user.Role, &user.Branch, &user.Semester); err != nil {
 			return nil, apperrors.Wrap(apperrors.ErrDatabase, "Could not fetch users", err)
 		}
 		users = append(users, user)

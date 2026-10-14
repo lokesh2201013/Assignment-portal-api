@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/atgsgrouptest/genet-microservice/RAG-service/apperrors"
 	"github.com/atgsgrouptest/genet-microservice/RAG-service/dto"
+	"github.com/atgsgrouptest/genet-microservice/RAG-service/models"
 	"github.com/atgsgrouptest/genet-microservice/RAG-service/services"
 	"github.com/gofiber/fiber/v2"
 )
@@ -111,6 +113,7 @@ func (ctrl *RAGHTTPController) GetPromptWithContextHTTP(c *fiber.Ctx) error {
 		req.Query = q
 		req.TenantID = c.Query("tenant_id")
 		req.CollectionName = c.Query("collection")
+		req.IncludeSources = strings.EqualFold(c.Query("include_sources"), "true") || strings.EqualFold(c.Query("citations"), "true")
 	} else if len(c.Body()) > 0 {
 		if err := c.BodyParser(&req); err != nil {
 			return ctrl.handleError(c, apperrors.Wrap(apperrors.ErrBadRequest, "Invalid JSON request body", err))
@@ -124,7 +127,16 @@ func (ctrl *RAGHTTPController) GetPromptWithContextHTTP(c *fiber.Ctx) error {
 	tenantID := ctrl.resolveTenantID(c, req.TenantID)
 	collectionName := ctrl.resolveCollectionName(c, req.CollectionName)
 
-	answer, err := ctrl.ragService.ProcessQuery(c.UserContext(), tenantID, collectionName, req.Query)
+	var answer string
+	var sources []models.SourceReference
+	var err error
+	if svc, ok := ctrl.ragService.(interface {
+		ProcessQueryWithSources(context.Context, string, string, string) (string, []models.SourceReference, error)
+	}); ok {
+		answer, sources, err = svc.ProcessQueryWithSources(c.UserContext(), tenantID, collectionName, req.Query)
+	} else {
+		answer, err = ctrl.ragService.ProcessQuery(c.UserContext(), tenantID, collectionName, req.Query)
+	}
 	if err != nil {
 		ctrl.logger.Error("Failed to process contextual query",
 			slog.String("tenant_id", tenantID),
@@ -137,6 +149,7 @@ func (ctrl *RAGHTTPController) GetPromptWithContextHTTP(c *fiber.Ctx) error {
 		Answer:         answer,
 		TenantID:       tenantID,
 		CollectionName: collectionName,
+		Sources:        sources,
 	})
 }
 
@@ -164,6 +177,63 @@ func (ctrl *RAGHTTPController) ListDocumentsHTTP(c *fiber.Ctx) error {
 }
 
 // HealthCheckHTTP returns service health and vectorstore status.
+func (ctrl *RAGHTTPController) ListCollectionsHTTP(c *fiber.Ctx) error {
+	tenantID := ctrl.resolveTenantID(c, c.Query("tenant_id"))
+	if svc, ok := ctrl.ragService.(interface {
+		ListCollections(context.Context, string) ([]models.RAGCollection, error)
+	}); ok {
+		collections, err := svc.ListCollections(c.UserContext(), tenantID)
+		if err != nil {
+			return ctrl.handleError(c, err)
+		}
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{
+			"tenant_id":   tenantID,
+			"collections": collections,
+			"total":       len(collections),
+		})
+	}
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"tenant_id": tenantID, "collections": []models.RAGCollection{}, "total": 0})
+}
+
+func (ctrl *RAGHTTPController) DeleteDocumentHTTP(c *fiber.Ctx) error {
+	documentID := strings.TrimSpace(c.Params("document_id"))
+	if documentID == "" {
+		return ctrl.handleError(c, apperrors.New(apperrors.ErrValidation, "Document ID is required"))
+	}
+	tenantID := ctrl.resolveTenantID(c, c.Query("tenant_id"))
+	collectionName := ctrl.resolveCollectionName(c, c.Query("collection"))
+	if svc, ok := ctrl.ragService.(interface {
+		DeleteDocument(context.Context, string, string, string) error
+	}); ok {
+		if err := svc.DeleteDocument(c.UserContext(), tenantID, collectionName, documentID); err != nil {
+			return ctrl.handleError(c, err)
+		}
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "deleted", "document_id": documentID, "tenant_id": tenantID})
+	}
+	return ctrl.handleError(c, apperrors.New(apperrors.ErrNotFound, "Delete document is not supported by this backend"))
+}
+
+func (ctrl *RAGHTTPController) UpdateDocumentStatusHTTP(c *fiber.Ctx) error {
+	documentID := strings.TrimSpace(c.Params("document_id"))
+	if documentID == "" {
+		return ctrl.handleError(c, apperrors.New(apperrors.ErrValidation, "Document ID is required"))
+	}
+	status := strings.TrimSpace(c.Query("status"))
+	if status == "" {
+		return ctrl.handleError(c, apperrors.New(apperrors.ErrValidation, "Status query parameter is required"))
+	}
+	tenantID := ctrl.resolveTenantID(c, c.Query("tenant_id"))
+	if svc, ok := ctrl.ragService.(interface {
+		UpdateDocumentStatus(context.Context, string, string, string) error
+	}); ok {
+		if err := svc.UpdateDocumentStatus(c.UserContext(), tenantID, documentID, status); err != nil {
+			return ctrl.handleError(c, err)
+		}
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "updated", "document_id": documentID, "tenant_id": tenantID, "new_status": status})
+	}
+	return ctrl.handleError(c, apperrors.New(apperrors.ErrNotFound, "Update document status is not supported by this backend"))
+}
+
 func (ctrl *RAGHTTPController) HealthCheckHTTP(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(dto.HealthResponse{
 		Status:    "healthy",

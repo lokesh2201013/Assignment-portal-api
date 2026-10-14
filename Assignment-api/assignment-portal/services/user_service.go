@@ -20,6 +20,7 @@ const (
 )
 
 var branchRegex = regexp.MustCompile(`^[A-Z0-9]{1,5}$`)
+var tenantIDRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 
 type userRepository interface {
 	Create(user *models.User) error
@@ -29,6 +30,16 @@ type userRepository interface {
 
 type tokenGenerator interface {
 	Generate(userID string, role string) (string, error)
+}
+
+type tenantUserRepository interface {
+	CreateInTenant(user *models.User, tenantID string) error
+	FindByEmailInTenant(email string, tenantID string) (models.User, error)
+	FindAdminsInTenant(tenantID string) ([]models.User, error)
+}
+
+type tenantTokenGenerator interface {
+	GenerateForTenant(userID string, role string, tenantID string) (string, error)
 }
 
 type UserService struct {
@@ -41,9 +52,16 @@ func NewUserService(users userRepository, jwt tokenGenerator) *UserService {
 }
 
 func (s *UserService) Register(req dto.RegisterRequest) (dto.UserResponse, error) {
+	req.TenantID = normalizeTenantID(req.TenantID)
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	req.Name = strings.TrimSpace(req.Name)
 	req.Branch = strings.ToUpper(strings.TrimSpace(req.Branch))
+	if !tenantIDRegex.MatchString(req.TenantID) {
+		return dto.UserResponse{}, apperrors.New(apperrors.ErrValidation, "Invalid tenant_id")
+	}
+	if req.TenantID != "default" {
+		return dto.UserResponse{}, apperrors.New(apperrors.ErrForbidden, "Tenant accounts require an invitation")
+	}
 
 	if req.Name == "" {
 		return dto.UserResponse{}, apperrors.New(apperrors.ErrValidation, "Name is required")
@@ -64,10 +82,16 @@ func (s *UserService) Register(req dto.RegisterRequest) (dto.UserResponse, error
 		return dto.UserResponse{}, apperrors.New(apperrors.ErrValidation, "Invalid semester. Must be between 1 and 20.")
 	}
 
-	if _, err := s.users.FindByEmail(req.Email); err == nil {
+	var lookupErr error
+	if repo, ok := s.users.(tenantUserRepository); ok {
+		_, lookupErr = repo.FindByEmailInTenant(req.Email, req.TenantID)
+	} else {
+		_, lookupErr = s.users.FindByEmail(req.Email)
+	}
+	if lookupErr == nil {
 		return dto.UserResponse{}, apperrors.New(apperrors.ErrConflict, "Email already in use")
-	} else if !errors.Is(err, apperrors.ErrNotFound) {
-		return dto.UserResponse{}, err
+	} else if !errors.Is(lookupErr, apperrors.ErrNotFound) {
+		return dto.UserResponse{}, lookupErr
 	}
 
 	hashedPassword, err := utils.HashPassword(req.Password)
@@ -77,6 +101,7 @@ func (s *UserService) Register(req dto.RegisterRequest) (dto.UserResponse, error
 
 	user := models.User{
 		UserID:   uuid.New(),
+		TenantID: req.TenantID,
 		Name:     req.Name,
 		Email:    req.Email,
 		Password: hashedPassword,
@@ -85,22 +110,38 @@ func (s *UserService) Register(req dto.RegisterRequest) (dto.UserResponse, error
 		Semester: req.Semester,
 	}
 
-	if err := s.users.Create(&user); err != nil {
-		if repositories.IsUniqueViolation(err) {
+	var createErr error
+	if repo, ok := s.users.(tenantUserRepository); ok {
+		createErr = repo.CreateInTenant(&user, req.TenantID)
+	} else {
+		createErr = s.users.Create(&user)
+	}
+	if createErr != nil {
+		if repositories.IsUniqueViolation(createErr) {
 			return dto.UserResponse{}, apperrors.New(apperrors.ErrConflict, "Email already in use")
 		}
-		return dto.UserResponse{}, err
+		return dto.UserResponse{}, createErr
 	}
 	return ToUserResponse(user), nil
 }
 
 func (s *UserService) Login(req dto.LoginRequest) (dto.LoginResponse, error) {
+	tenantID := normalizeTenantID(req.TenantID)
+	if !tenantIDRegex.MatchString(tenantID) {
+		return dto.LoginResponse{}, apperrors.New(apperrors.ErrValidation, "Invalid tenant_id")
+	}
 	email := strings.ToLower(strings.TrimSpace(req.Email))
 	if email == "" || req.Password == "" {
 		return dto.LoginResponse{}, apperrors.New(apperrors.ErrValidation, "Email and password are required")
 	}
 
-	user, err := s.users.FindByEmail(email)
+	var user models.User
+	var err error
+	if repo, ok := s.users.(tenantUserRepository); ok {
+		user, err = repo.FindByEmailInTenant(email, tenantID)
+	} else {
+		user, err = s.users.FindByEmail(email)
+	}
 	if err != nil {
 		if errors.Is(err, apperrors.ErrNotFound) {
 			return dto.LoginResponse{}, apperrors.New(apperrors.ErrUnauthorized, "Invalid credentials")
@@ -112,7 +153,12 @@ func (s *UserService) Login(req dto.LoginRequest) (dto.LoginResponse, error) {
 		return dto.LoginResponse{}, apperrors.New(apperrors.ErrUnauthorized, "Invalid credentials")
 	}
 
-	token, err := s.jwt.Generate(user.UserID.String(), user.Role)
+	var token string
+	if generator, ok := s.jwt.(tenantTokenGenerator); ok {
+		token, err = generator.GenerateForTenant(user.UserID.String(), user.Role, tenantID)
+	} else {
+		token, err = s.jwt.Generate(user.UserID.String(), user.Role)
+	}
 	if err != nil {
 		return dto.LoginResponse{}, apperrors.Wrap(apperrors.ErrUnexpected, "Could not generate token", err)
 	}
@@ -132,9 +178,34 @@ func (s *UserService) GetAllAdmins() ([]dto.UserResponse, error) {
 	return out, nil
 }
 
+func (s *UserService) GetAllAdminsInTenant(tenantID string) ([]dto.UserResponse, error) {
+	repo, ok := s.users.(tenantUserRepository)
+	if !ok {
+		return s.GetAllAdmins()
+	}
+	admins, err := repo.FindAdminsInTenant(normalizeTenantID(tenantID))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]dto.UserResponse, 0, len(admins))
+	for _, admin := range admins {
+		out = append(out, ToUserResponse(admin))
+	}
+	return out, nil
+}
+
+func normalizeTenantID(tenantID string) string {
+	tenantID = strings.ToLower(strings.TrimSpace(tenantID))
+	if tenantID == "" {
+		return "default"
+	}
+	return tenantID
+}
+
 func ToUserResponse(user models.User) dto.UserResponse {
 	return dto.UserResponse{
 		UserID:   user.UserID,
+		TenantID: user.TenantID,
 		Name:     user.Name,
 		Email:    user.Email,
 		Role:     user.Role,

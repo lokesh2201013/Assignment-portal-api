@@ -1,11 +1,18 @@
 import asyncio
 import logging
+import os
 import uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 import uvicorn
 
 from app.config import get_settings
@@ -19,6 +26,19 @@ from app.controllers.chatcontrollers import chat_router
 settings = get_settings()
 configure_logging(settings.log_level)
 logger = logging.getLogger(__name__)
+
+
+def configure_tracing() -> TracerProvider:
+    endpoint = os.getenv("JAEGER_ENDPOINT") or os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT") or "http://localhost:4318"
+    resource = Resource.create({"service.name": "video-service"})
+    provider = TracerProvider(resource=resource)
+    exporter = OTLPSpanExporter(endpoint=f"{endpoint.rstrip('/')}/v1/traces", headers={})
+    provider.add_span_processor(BatchSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)
+    return provider
+
+
+configure_tracing()
 
 
 @asynccontextmanager
@@ -46,7 +66,15 @@ async def lifespan(app: FastAPI):
     logger.info("Video Service shutdown complete.")
 
 
-app = FastAPI(title="Video Processing & Chat Service", lifespan=lifespan)
+app = FastAPI(
+    title="Video Processing & Chat Service",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+    lifespan=lifespan,
+)
+FastAPIInstrumentor.instrument_app(app)
 
 
 class RequestIDMiddleware(BaseHTTPMiddleware):

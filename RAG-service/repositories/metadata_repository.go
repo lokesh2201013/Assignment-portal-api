@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/atgsgrouptest/genet-microservice/RAG-service/apperrors"
@@ -20,6 +21,9 @@ type MetadataRepository interface {
 	EnsureCollection(ctx context.Context, tenantID, collectionName string, dimension int) (*models.RAGCollection, error)
 	SaveDocumentWithChunks(ctx context.Context, doc *models.RAGDocument, chunks []models.RAGChunk) error
 	GetDocuments(ctx context.Context, tenantID, collectionName string) ([]models.RAGDocument, error)
+	ListCollections(ctx context.Context, tenantID string) ([]models.RAGCollection, error)
+	DeleteDocument(ctx context.Context, tenantID, collectionName, documentID string) error
+	UpdateDocumentStatus(ctx context.Context, tenantID, documentID, status string) error
 	GetChunksByDocument(ctx context.Context, tenantID, docID string) ([]models.RAGChunk, error)
 	GetChunksByPointIDs(ctx context.Context, tenantID string, pointIDs []string) ([]models.RAGChunk, error)
 	Ping(ctx context.Context) error
@@ -223,6 +227,79 @@ func (r *PostgresMetadataRepository) GetDocuments(ctx context.Context, tenantID,
 }
 
 // GetChunksByDocument retrieves all chunks stored for a document.
+func (r *PostgresMetadataRepository) ListCollections(ctx context.Context, tenantID string) ([]models.RAGCollection, error) {
+	if tenantID == "" {
+		tenantID = "default"
+	}
+
+	query := `
+		SELECT collection_id, tenant_id, name, vector_db, dimension, created_at
+		FROM rag_collections
+		WHERE tenant_id = $1
+		ORDER BY created_at DESC;
+	`
+	var collections []models.RAGCollection
+	if err := r.db.SelectContext(ctx, &collections, query, tenantID); err != nil {
+		return nil, apperrors.Wrap(apperrors.ErrDatabase, "Failed to fetch collections", err)
+	}
+	return collections, nil
+}
+
+func (r *PostgresMetadataRepository) DeleteDocument(ctx context.Context, tenantID, collectionName, documentID string) error {
+	if tenantID == "" {
+		tenantID = "default"
+	}
+	if documentID == "" {
+		return apperrors.New(apperrors.ErrValidation, "Document ID cannot be empty")
+	}
+
+	query := `DELETE FROM rag_documents WHERE tenant_id = $1 AND document_id = $2;`
+	args := []interface{}{tenantID, documentID}
+	if strings.TrimSpace(collectionName) != "" {
+		query = `DELETE FROM rag_documents WHERE tenant_id = $1 AND collection_name = $2 AND document_id = $3;`
+		args = []interface{}{tenantID, collectionName, documentID}
+	}
+
+	result, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return apperrors.Wrap(apperrors.ErrDatabase, "Failed to delete document metadata", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return apperrors.Wrap(apperrors.ErrDatabase, "Failed to determine delete result", err)
+	}
+	if rows == 0 {
+		return apperrors.New(apperrors.ErrNotFound, "Document not found")
+	}
+	return nil
+}
+
+func (r *PostgresMetadataRepository) UpdateDocumentStatus(ctx context.Context, tenantID, documentID, status string) error {
+	if tenantID == "" {
+		tenantID = "default"
+	}
+	if documentID == "" {
+		return apperrors.New(apperrors.ErrValidation, "Document ID cannot be empty")
+	}
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return apperrors.New(apperrors.ErrValidation, "Status cannot be empty")
+	}
+
+	result, err := r.db.ExecContext(ctx, `UPDATE rag_documents SET status = $1 WHERE tenant_id = $2 AND document_id = $3;`, status, tenantID, documentID)
+	if err != nil {
+		return apperrors.Wrap(apperrors.ErrDatabase, "Failed to update document status", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return apperrors.Wrap(apperrors.ErrDatabase, "Failed to determine update result", err)
+	}
+	if rows == 0 {
+		return apperrors.New(apperrors.ErrNotFound, "Document not found")
+	}
+	return nil
+}
+
 func (r *PostgresMetadataRepository) GetChunksByDocument(ctx context.Context, tenantID, docID string) ([]models.RAGChunk, error) {
 	query := `
 		SELECT chunk_id, document_id, tenant_id, chunk_index, content, point_id, COALESCE(metadata::text, '{}') as metadata, created_at

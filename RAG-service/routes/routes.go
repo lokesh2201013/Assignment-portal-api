@@ -15,4 +15,9 @@ func RegisterRoutes(app *fiber.App, ctrl *controllers.RAGHTTPController) {
 	app.Post("/getPromptWithContext", ctrl.GetPromptWithContextHTTP)
 	app.Get("/healthz", ctrl.HealthCheckHTTP)
 	app.Get("/readyz", ctrl.HealthCheckHTTP)
+	app.Get("/collections", ctrl.ListCollectionsHTTP)
+	app.Get("/documents", ctrl.ListDocumentsHTTP)
+	app.Delete("/documents/:document_id", ctrl.DeleteDocumentHTTP)
+	app.Patch("/documents/:document_id", ctrl.UpdateDocumentStatusHTTP)
+	app.Put("/documents/:document_id", ctrl.UpdateDocumentStatusHTTP)
 }

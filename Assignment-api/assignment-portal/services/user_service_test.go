@@ -57,6 +57,21 @@ func TestRegisterRejectsAdminRole(t *testing.T) {
 	}
 }
 
+func TestRegisterRejectsUninvitedTenant(t *testing.T) {
+	service := NewUserService(&fakeUserRepo{byEmail: map[string]models.User{}}, utils.NewJWTManager("secret", "test", time.Hour))
+	_, err := service.Register(dto.RegisterRequest{
+		TenantID: "unregistered-school",
+		Name:     "Student",
+		Email:    "student@example.com",
+		Password: "password123",
+		Branch:   "cse",
+		Semester: 3,
+	})
+	if !errors.Is(err, apperrors.ErrForbidden) {
+		t.Fatalf("expected forbidden error, got %v", err)
+	}
+}
+
 func TestRegisterReturnsDTOAndStoresHash(t *testing.T) {
 	repo := &fakeUserRepo{byEmail: map[string]models.User{}}
 	service := NewUserService(repo, utils.NewJWTManager("secret", "test", time.Hour))
@@ -123,6 +138,28 @@ func TestLoginReturnsTokenForValidPassword(t *testing.T) {
 	}
 	if claims.UserID != userID.String() || claims.Role != RoleUser {
 		t.Fatalf("unexpected claims: %+v", claims)
+	}
+}
+
+func TestLoginTokenIsBoundToTenant(t *testing.T) {
+	hash, err := utils.HashPassword("password123")
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+	manager := utils.NewJWTManager("secret", "test", time.Hour)
+	service := NewUserService(&fakeUserRepo{byEmail: map[string]models.User{
+		"student@example.com": {UserID: uuid.New(), Email: "student@example.com", Password: hash, Role: RoleUser},
+	}}, manager)
+	response, err := service.Login(dto.LoginRequest{TenantID: "school-42", Email: "student@example.com", Password: "password123"})
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	claims, err := manager.Parse(response.Token)
+	if err != nil {
+		t.Fatalf("parse token: %v", err)
+	}
+	if claims.TenantID != "school-42" {
+		t.Fatalf("expected tenant claim school-42, got %q", claims.TenantID)
 	}
 }
 

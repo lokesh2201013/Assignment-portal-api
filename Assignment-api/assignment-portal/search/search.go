@@ -53,13 +53,24 @@ func IndexVideo(video models.Video) {
 }
 
 func (s *VideoSearch) SearchVideos(ctx context.Context, query string) ([]models.Video, error) {
+	return s.SearchVideosInTenant(ctx, "default", query)
+}
+
+func (s *VideoSearch) SearchVideosInTenant(ctx context.Context, tenantID string, query string) ([]models.Video, error) {
 	var buf bytes.Buffer
 	searchQuery := map[string]interface{}{
 		"query": map[string]interface{}{
-			"multi_match": map[string]interface{}{
-				"query":     query,
-				"fields":    []string{"title^3", "description", "tags^2"},
-				"fuzziness": "AUTO",
+			"bool": map[string]interface{}{
+				"must": []interface{}{map[string]interface{}{
+					"multi_match": map[string]interface{}{
+						"query":     query,
+						"fields":    []string{"title^3", "description", "tags^2"},
+						"fuzziness": "AUTO",
+					},
+				}},
+				"filter": []interface{}{map[string]interface{}{
+					"term": map[string]interface{}{"tenant_id": tenantID},
+				}},
 			},
 		},
 	}

@@ -1,1 +1,2 @@
-CREATE DATABASE email_db;
+-- The PostgreSQL image creates POSTGRES_DB before running init scripts.
+-- Email service tables and indexes are initialized by internal/storage/postgres.go.

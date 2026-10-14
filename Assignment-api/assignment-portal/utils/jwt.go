@@ -15,8 +15,9 @@ type JWTManager struct {
 }
 
 type Claims struct {
-	UserID string
-	Role   string
+	UserID   string
+	Role     string
+	TenantID string
 }
 
 func NewJWTManager(secret, issuer string, ttl time.Duration) *JWTManager {
@@ -24,11 +25,19 @@ func NewJWTManager(secret, issuer string, ttl time.Duration) *JWTManager {
 }
 
 func (m *JWTManager) Generate(userID string, role string) (string, error) {
+	return m.GenerateForTenant(userID, role, "default")
+}
+
+func (m *JWTManager) GenerateForTenant(userID string, role string, tenantID string) (string, error) {
+	if tenantID == "" {
+		tenantID = "default"
+	}
 	claims := jwt.MapClaims{
-		"exp":    time.Now().Add(m.ttl).Unix(),
-		"iss":    m.issuer,
-		"userID": userID,
-		"role":   role,
+		"exp":       time.Now().Add(m.ttl).Unix(),
+		"iss":       m.issuer,
+		"userID":    userID,
+		"role":      role,
+		"tenant_id": tenantID,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -57,11 +66,15 @@ func (m *JWTManager) Parse(tokenString string) (Claims, error) {
 
 	userID, _ := claims["userID"].(string)
 	role, _ := claims["role"].(string)
+	tenantID, _ := claims["tenant_id"].(string)
+	if tenantID == "" {
+		tenantID = "default"
+	}
 	if userID == "" || role == "" {
 		return Claims{}, errors.New("missing claims")
 	}
 
-	return Claims{UserID: userID, Role: role}, nil
+	return Claims{UserID: userID, Role: role, TenantID: tenantID}, nil
 }
 
 var defaultJWT = NewJWTManager("your-secret-key", "assignment-portal", 24*time.Hour)

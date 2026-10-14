@@ -24,6 +24,16 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers.get("X-Request-ID"), "test-req-123")
 
+    def test_openapi_and_swagger_docs_are_available(self):
+        schema_response = self.client.get("/openapi.json")
+        self.assertEqual(schema_response.status_code, 200)
+        self.assertEqual(schema_response.json()["info"]["title"], "Video Processing & Chat Service")
+        self.assertIn("/video/serve/{video_id}", schema_response.json()["paths"])
+
+        docs_response = self.client.get("/docs")
+        self.assertEqual(docs_response.status_code, 200)
+        self.assertIn("swagger-ui", docs_response.text.lower())
+
     @patch("app.routes.routes.get_video_repository")
     def test_serve_video_not_found_mapped_to_404(self, mock_get_repo):
         mock_repo = MagicMock()

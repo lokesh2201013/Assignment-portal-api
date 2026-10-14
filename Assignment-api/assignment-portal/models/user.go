@@ -4,6 +4,7 @@ import "github.com/google/uuid"
 
 type User struct {
 	UserID   uuid.UUID `json:"user_id"`
+	TenantID string    `json:"tenant_id"`
 	Name     string    `json:"name"`
 	Email    string    `json:"email"`
 	Password string    `json:"-"`

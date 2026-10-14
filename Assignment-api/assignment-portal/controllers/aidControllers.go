@@ -16,7 +16,7 @@ type AidService interface {
 	GetHelp(ctx context.Context, query string) (string, error)
 	QueryData(ctx context.Context, naturalLanguageQuery string) ([]map[string]interface{}, string, error)
 	CreatePresignedVideoURL(ctx context.Context, req dto.VideoPresignRequest) (string, uuid.UUID, error)
-	StartVideoProcessing(id string) error
+	StartVideoProcessing(ctx context.Context, id string) error
 }
 
 type AidController struct {
@@ -107,7 +107,7 @@ func (h *AidController) UpdateVideoStatus(c *fiber.Ctx) error {
 	if id == "" {
 		id = strings.TrimSpace(c.Query("id"))
 	}
-	if err := h.service.StartVideoProcessing(id); err != nil {
+	if err := h.service.StartVideoProcessing(c.UserContext(), id); err != nil {
 		return respondError(c, h.logger, err)
 	}
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{

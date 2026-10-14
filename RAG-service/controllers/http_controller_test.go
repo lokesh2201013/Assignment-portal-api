@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/atgsgrouptest/genet-microservice/RAG-service/apperrors"
 	"github.com/atgsgrouptest/genet-microservice/RAG-service/dto"
 	"github.com/atgsgrouptest/genet-microservice/RAG-service/models"
 	"github.com/gofiber/fiber/v2"
@@ -36,9 +35,29 @@ func (m *MockRAGService) ProcessQuery(ctx context.Context, tenantID, collectionN
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockRAGService) ProcessQueryWithSources(ctx context.Context, tenantID, collectionName, query string) (string, []models.SourceReference, error) {
+	answer, err := m.ProcessQuery(ctx, tenantID, collectionName, query)
+	return answer, nil, err
+}
+
 func (m *MockRAGService) ListDocuments(ctx context.Context, tenantID, collectionName string) ([]models.RAGDocument, error) {
 	args := m.Called(ctx, tenantID, collectionName)
 	return args.Get(0).([]models.RAGDocument), args.Error(1)
+}
+
+func (m *MockRAGService) ListCollections(ctx context.Context, tenantID string) ([]models.RAGCollection, error) {
+	args := m.Called(ctx, tenantID)
+	return args.Get(0).([]models.RAGCollection), args.Error(1)
+}
+
+func (m *MockRAGService) DeleteDocument(ctx context.Context, tenantID, collectionName, documentID string) error {
+	args := m.Called(ctx, tenantID, collectionName, documentID)
+	return args.Error(0)
+}
+
+func (m *MockRAGService) UpdateDocumentStatus(ctx context.Context, tenantID, documentID, status string) error {
+	args := m.Called(ctx, tenantID, documentID, status)
+	return args.Error(0)
 }
 
 func setupTestFiberApp(ctrl *RAGHTTPController) *fiber.App {
