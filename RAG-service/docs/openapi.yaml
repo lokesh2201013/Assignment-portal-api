@@ -1,0 +1,127 @@
+openapi: 3.0.3
+info:
+  title: RAG Service API
+  version: 1.0.0
+  description: >-
+    Multi-tenant document ingestion and retrieval-augmented Q&A. Tenant and collection
+    defaults are configured by the service; HTTP callers may provide tenant_id and collection.
+servers:
+  - url: http://localhost:8001
+tags:
+  - name: Documents
+  - name: Search
+  - name: Operations
+paths:
+  /sendFiles:
+    post:
+      tags: [Documents]
+      summary: Upload and embed one or more documents
+      parameters:
+        - { in: header, name: X-Tenant-ID, schema: { type: string } }
+        - { in: header, name: X-Collection-Name, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                tenant_id: { type: string }
+                collection: { type: string }
+                files: { type: array, items: { type: string, format: binary } }
+      responses:
+        '200': { description: Processed file and chunk counts with document IDs }
+        '413': { description: File exceeds configured size limit }
+        '422': { description: Invalid upload }
+  /getPromptWithContext:
+    get:
+      tags: [Search]
+      summary: Search context and generate an answer
+      parameters:
+        - { in: query, name: query, required: true, schema: { type: string, maxLength: 4000 } }
+        - { in: query, name: tenant_id, schema: { type: string } }
+        - { in: query, name: collection, schema: { type: string } }
+        - { in: query, name: include_sources, schema: { type: boolean, default: false } }
+        - { in: query, name: citations, schema: { type: boolean, default: false } }
+      responses:
+        '200': { description: Answer and source references }
+        '422': { description: Empty or overlong query }
+    post:
+      tags: [Search]
+      summary: Search context and generate an answer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query: { type: string, maxLength: 4000 }
+                tenant_id: { type: string }
+                collection_name: { type: string }
+                include_sources: { type: boolean }
+      responses:
+        '200': { description: Answer and source references }
+        '422': { description: Empty or overlong query }
+  /documents:
+    get:
+      tags: [Documents]
+      summary: List documents in a tenant collection
+      parameters:
+        - { in: query, name: tenant_id, schema: { type: string } }
+        - { in: query, name: collection, schema: { type: string } }
+      responses:
+        '200': { description: Document metadata and total count }
+  /collections:
+    get:
+      tags: [Documents]
+      summary: List collections for a tenant
+      parameters:
+        - { in: query, name: tenant_id, schema: { type: string } }
+      responses:
+        '200': { description: Collection metadata and total count }
+  /documents/{document_id}:
+    delete:
+      tags: [Documents]
+      summary: Delete document metadata and its relational chunks
+      description: Vector points are also removed by the service where supported.
+      parameters:
+        - { in: path, name: document_id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: tenant_id, schema: { type: string } }
+        - { in: query, name: collection, schema: { type: string } }
+      responses:
+        '200': { description: Document deleted }
+        '404': { description: Document not found }
+    patch:
+      tags: [Documents]
+      summary: Update a document status
+      parameters:
+        - { in: path, name: document_id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: tenant_id, schema: { type: string } }
+        - { in: query, name: status, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Status updated }
+        '404': { description: Document not found }
+    put:
+      tags: [Documents]
+      summary: Update a document status (compatibility alias)
+      parameters:
+        - { in: path, name: document_id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: tenant_id, schema: { type: string } }
+        - { in: query, name: status, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Status updated }
+  /healthz:
+    get:
+      tags: [Operations]
+      summary: Liveness probe
+      responses:
+        '200': { description: Service is running }
+  /readyz:
+    get:
+      tags: [Operations]
+      summary: Readiness probe
+      responses:
+        '200': { description: Service readiness response }

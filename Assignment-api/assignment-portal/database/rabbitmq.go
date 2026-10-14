@@ -1,48 +1,61 @@
 package database
 
 import (
-	"log"
-	//"os"
+	"fmt"
 
+	"github.com/lokesh2201013/config"
 	"github.com/streadway/amqp"
 )
 
-func failOnError(err error, msg string) {
-	if err != nil {
-		log.Fatalf("%s: %s", msg, err)
-	}
+type RabbitPublisher struct {
+	url       string
+	queueName string
 }
 
-func PublishMessage(id string) {
-	conn, err := amqp.Dial("amqp://guest:guest@localhost:5672/")
-	failOnError(err, "Failed to connect to RabbitMQ")
+func NewRabbitPublisher(cfg config.Config) *RabbitPublisher {
+	return &RabbitPublisher{url: cfg.RabbitMQURL, queueName: "task_queue"}
+}
+
+func (p *RabbitPublisher) PublishMessage(id string) error {
+	conn, err := amqp.Dial(p.url)
+	if err != nil {
+		return fmt.Errorf("connect to RabbitMQ: %w", err)
+	}
 	defer conn.Close()
 
 	ch, err := conn.Channel()
-	failOnError(err, "Failed to open a channel")
+	if err != nil {
+		return fmt.Errorf("open RabbitMQ channel: %w", err)
+	}
 	defer ch.Close()
 
 	q, err := ch.QueueDeclare(
-		"task_queue", // queue name
-		true,         // durable
-		false,        // delete when unused
-		false,        
-		false,       
-		nil,          
+		p.queueName,
+		true,
+		false,
+		false,
+		false,
+		nil,
 	)
-	failOnError(err, "Failed to declare a queue")
+	if err != nil {
+		return fmt.Errorf("declare RabbitMQ queue: %w", err)
+	}
 
-	body := id
-	err = ch.Publish(
-		"",     // exchange
-		q.Name, // routing key
-		false,  // mandatory
-		false,  // immediate
+	if err := ch.Publish(
+		"",
+		q.Name,
+		false,
+		false,
 		amqp.Publishing{
 			ContentType: "text/plain",
-			Body:        []byte(body),
-		})
-	failOnError(err, "Failed to publish a message")
+			Body:        []byte(id),
+		}); err != nil {
+		return fmt.Errorf("publish RabbitMQ message: %w", err)
+	}
 
-	log.Printf(" [x] Sent %s", body)
+	return nil
+}
+
+func PublishMessage(id string) error {
+	return NewRabbitPublisher(config.Load()).PublishMessage(id)
 }

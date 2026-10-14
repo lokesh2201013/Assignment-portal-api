@@ -1,5 +1,7 @@
 # 🎓 Assignment Portal - Microservices Documentation
 
+> **Current documentation:** use the [service documentation index](docs/README.md) for live API routes, OpenAPI/Swagger links, database schemas, configuration, and run/test commands. Endpoint examples later in this legacy overview may refer to routes that have changed.
+
 
 This repository contains a comprehensive assignment management system built with **microservices architecture**. The system consists of three main microservices that work together to provide assignment management, RAG-based assistance, and email notification capabilities.
 
