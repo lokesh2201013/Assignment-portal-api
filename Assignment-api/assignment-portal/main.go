@@ -17,7 +17,7 @@ import (
 	"github.com/lokesh2201013/config"
 	"github.com/lokesh2201013/controllers"
 	"github.com/lokesh2201013/database"
-	"github.com/lokesh2201013/middlewares"
+	middleware "github.com/lokesh2201013/middlewares"
 	"github.com/lokesh2201013/repositories"
 	"github.com/lokesh2201013/routes"
 	"github.com/lokesh2201013/search"

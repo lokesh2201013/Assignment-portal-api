@@ -1,12 +1,13 @@
 package routes
 
 import (
+	"log/slog"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/jmoiron/sqlx"
 	"github.com/lokesh2201013/controllers"
-	"github.com/lokesh2201013/middlewares"
+	middleware "github.com/lokesh2201013/middlewares"
 	"github.com/lokesh2201013/utils"
-	"log/slog"
 )
 
 type Controllers struct {
