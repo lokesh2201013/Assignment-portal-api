@@ -13,8 +13,7 @@ import (
 	//"strings"
 	//"math"
 
-	//"github.com/atgsgrouptest/genet-microservice/RAG-service/Logger"
-	 "github.com/atgsgrouptest/genet-microservice/RAG-service/Logger"
+	"github.com/atgsgrouptest/genet-microservice/RAG-service/logger"
 	"github.com/atgsgrouptest/genet-microservice/RAG-service/models"
 	//"github.com/json-iterator/go"
 	"go.uber.org/zap"

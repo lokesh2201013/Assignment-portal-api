@@ -241,7 +241,7 @@ func testProtectedEndpoints() {
 }
 
 func main() {
-	fmt.Println("Starting API Tests...\n")
+	fmt.Println("Starting API Tests...")
 
 	testRegister()
 	testLogin()

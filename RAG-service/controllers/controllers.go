@@ -4,7 +4,7 @@ import (
 	// "github.com/atgsgrouptest/genet-microservice/RAG-service/Error"
 	"fmt"
 	"mime/multipart"
-	"github.com/atgsgrouptest/genet-microservice/RAG-service/Logger"
+	"github.com/atgsgrouptest/genet-microservice/RAG-service/logger"
 	"github.com/atgsgrouptest/genet-microservice/RAG-service/embedding"
 	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"

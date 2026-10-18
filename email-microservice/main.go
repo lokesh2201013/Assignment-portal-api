@@ -28,44 +28,83 @@ type emailServiceServer struct {
 func getCPUUsage() float64 {
 	percentages, err := cpu.Percent(0, false)
 	if err != nil {
-		return 0
+		logger.Error("database connection failed", "error", err)
+		os.Exit(1)
 	}
-	return percentages[0]
+	defer storage.Close(db)
+	logger.Info("database connected")
+
+	// Initialize repositories
+	repos := &repository.Repositories{
+		User:         repository.NewPostgresUserRepository(db),
+		Sender:       repository.NewPostgresSenderRepository(db),
+		Template:     repository.NewPostgresTemplateRepository(db),
+		Analytics:    repository.NewPostgresAnalyticsRepository(db),
+		EmailMessage: repository.NewPostgresEmailMessageRepository(db),
+	}
+	logger.Info("repositories initialized")
+
+	// Initialize services
+	services := &route.Services{
+		Auth:      service.NewAuthService(repos.User, cfg, logger),
+		Sender:    service.NewSenderService(repos.Sender, logger),
+		Template:  service.NewTemplateService(repos.Template, logger),
+		Email:     service.NewEmailService(repos.Sender, repos.Analytics, repos.EmailMessage, cfg, logger),
+		Analytics: service.NewAnalyticsService(repos.Analytics, repos.Sender, logger),
+	}
+	logger.Info("services initialized")
+
+	// Start background email queue worker
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+	go services.Email.StartQueueWorker(workerCtx)
+
+	// Start gRPC server in background
+	go startGRPCServer(cfg, handler.NewEmailServiceServer(services.Email, cfg.SMTPFrom, logger), logger)
+
+	// Start HTTP server
+	startHTTPServer(cfg, services, logger)
 }
 
-func setupMetrics() (*prometheus.CounterVec, prometheus.Gauge, prometheus.Histogram, prometheus.Summary) {
-	counter := prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "http_requests_total",
-			Help: "Total number of HTTP requests",
-		},
-		[]string{"method", "route"},
-	)
+func initLogger() *slog.Logger {
+	logLevel := slog.LevelInfo
+	if levelStr := os.Getenv("LOG_LEVEL"); levelStr != "" {
+		switch levelStr {
+		case "debug", "DEBUG":
+			logLevel = slog.LevelDebug
+		case "warn", "WARN":
+			logLevel = slog.LevelWarn
+		case "error", "ERROR":
+			logLevel = slog.LevelError
+		}
+	}
 
-	gauge := prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "cpu_usage_percentage",
-			Help: "Current CPU usage in percentage",
-		},
-	)
+	opts := &slog.HandlerOptions{
+		Level: logLevel,
+	}
 
-	histogram := prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Name:    "http_request_duration_seconds",
-			Help:    "Histogram for request duration in seconds",
-			Buckets: prometheus.DefBuckets,
-		},
-	)
+	handler := slog.NewJSONHandler(os.Stdout, opts)
+	return slog.New(handler)
+}
 
-	summary := prometheus.NewSummary(
-		prometheus.SummaryOpts{
-			Name:       "request_duration_seconds",
-			Help:       "Summary of request durations",
-			Objectives: map[float64]float64{0.5: 0.05, 0.9: 0.01, 0.99: 0.001},
+func startHTTPServer(cfg *config.Config, services *route.Services, logger *slog.Logger) {
+	app := fiber.New(fiber.Config{
+		ErrorHandler: func(c *fiber.Ctx, err error) error {
+			logger.Error("unhandled error", "error", err, "path", c.Path())
+			return c.Status(500).JSON(fiber.Map{
+				"error":   "internal_error",
+				"message": "an unexpected error occurred",
+				"status":  500,
+			})
 		},
-	)
+	})
 
-	prometheus.MustRegister(counter, gauge, histogram, summary)
+	// Setup routes
+	route.Setup(app, *services, logger)
+
+	// Setup graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
 		for {

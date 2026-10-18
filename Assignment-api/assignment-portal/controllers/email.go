@@ -34,7 +34,7 @@ func assignTask(assignments []models.Assignment) (string, error) {
 	}
 
 	req := &pb.AssignmentEmailRequest{
-		Subject:    fmt.Sprintf("You have a task assigned by Admin %d", adminID),
+		Subject:    fmt.Sprintf("You have a task assigned by Admin %s", adminID.String()),
 		Body:       fmt.Sprintf("You have been assigned a new task.\nTask: %s\nBranch: %s\nSemester: %d\nCourseCode: %s\nDue Date: %s", task, branch, Semester, code, duedate),
 		Recipients: emails,
 	}
