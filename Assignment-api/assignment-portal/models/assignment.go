@@ -5,6 +5,7 @@ import "github.com/google/uuid"
 // Admin-created assignment
 type Assignment struct {
 	AssignmentID uuid.UUID `json:"id"`
+	TenantID     string    `json:"tenant_id"`
 	Email        string    `json:"email"`
 	AdminID      uuid.UUID `json:"admin_id"`
 	Task         string    `json:"task"`
@@ -21,6 +22,7 @@ type Assignment struct {
 
 type SubmitAssignment struct {
 	SubmissionID uuid.UUID `json:"submission_id"`
+	TenantID     string    `json:"tenant_id"`
 
 	AssignmentID   uuid.UUID `json:"assignment_id"`
 	UserID         uuid.UUID `json:"user_id"`

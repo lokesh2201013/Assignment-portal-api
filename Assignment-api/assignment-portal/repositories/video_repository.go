@@ -25,11 +25,15 @@ func (r *VideoRepository) Create(video *models.Video) error {
 	if err != nil {
 		return apperrors.Wrap(apperrors.ErrDatabase, "Could not save video", err)
 	}
-	query := `INSERT INTO videos (id, url, title, tags, status, description)
-			  VALUES (:id, :url, :title, :tags, :status, :description)`
+	if video.TenantID == "" {
+		video.TenantID = "default"
+	}
+	query := `INSERT INTO videos (id, tenant_id, url, title, tags, status, description)
+			  VALUES (:id, :tenant_id, :url, :title, :tags, :status, :description)`
 
 	params := map[string]interface{}{
 		"id":          video.ID,
+		"tenant_id":   video.TenantID,
 		"url":         video.URL,
 		"title":       video.Title,
 		"tags":        tags,
@@ -43,12 +47,17 @@ func (r *VideoRepository) Create(video *models.Video) error {
 }
 
 func (r *VideoRepository) UpdateStatus(id string, status string) error {
+	return r.UpdateStatusInTenant("default", id, status)
+}
+
+func (r *VideoRepository) UpdateStatusInTenant(tenantID string, id string, status string) error {
 	query := `UPDATE videos 
 				SET status = :status
-			  WHERE id = :id`
+			  WHERE tenant_id = :tenant_id AND id = :id`
 	params := map[string]interface{}{
-		"status": status,
-		"id":     id,
+		"status":    status,
+		"tenant_id": tenantID,
+		"id":        id,
 	}
 	if _, err := r.db.NamedExec(query, params); err != nil {
 		return apperrors.Wrap(apperrors.ErrDatabase, "Could not update video status", err)

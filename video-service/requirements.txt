@@ -2,8 +2,13 @@ fastapi
 uvicorn
 python-multipart
 pydantic
+pydantic-settings
 sqlalchemy
 databases
 psycopg2-binary
-google-cloud-storage  
+google-cloud-storage
 aio_pika
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-instrumentation-fastapi
+opentelemetry-exporter-otlp-proto-http

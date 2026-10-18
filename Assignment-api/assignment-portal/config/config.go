@@ -27,6 +27,10 @@ type Config struct {
 	GCSBucketName    string
 	GCSPrivateKey    string
 	GCSAccessID      string
+	PublicAppURL     string
+	ClamAVAddress    string
+	UploadMaxBytes   int64
+	UploadRetention  int
 }
 
 func Load() Config {
@@ -49,6 +53,10 @@ func Load() Config {
 		GCSBucketName:    env("GCS_BUCKET_NAME", "my-video-bucket"),
 		GCSPrivateKey:    os.Getenv("GCS_PRIVATE_KEY"),
 		GCSAccessID:      env("GCS_ACCESS_ID", "your-service-account@project-id.iam.gserviceaccount.com"),
+		PublicAppURL:     env("PUBLIC_APP_URL", "http://localhost:3000"),
+		ClamAVAddress:    env("CLAMAV_ADDRESS", "localhost:3310"),
+		UploadMaxBytes:   envInt64("UPLOAD_MAX_BYTES", 10485760),
+		UploadRetention:  envInt("UPLOAD_RETENTION_DAYS", 365),
 	}
 }
 
@@ -79,6 +87,22 @@ func envDurationHours(key string, fallback int) time.Duration {
 		value = fallback
 	}
 	return time.Duration(value) * time.Hour
+}
+
+func envInt(key string, fallback int) int {
+	value, err := strconv.Atoi(env(key, strconv.Itoa(fallback)))
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func envInt64(key string, fallback int64) int64 {
+	value, err := strconv.ParseInt(env(key, strconv.FormatInt(fallback, 10)), 10, 64)
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
 }
 
 func splitEnv(key, fallback string) []string {

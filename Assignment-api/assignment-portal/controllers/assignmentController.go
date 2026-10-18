@@ -9,11 +9,14 @@ import (
 
 func (h *AssignmentController) UploadAssignment(c *fiber.Ctx) error {
 	assignmentID := c.FormValue("assignment_id")
-	userID := c.FormValue("user_id")
 
 	parsedAssignmentID, err := uuid.Parse(assignmentID)
 	if err != nil {
 		return respondError(c, h.logger, apperrors.New(apperrors.ErrValidation, "Invalid assignment_id"))
+	}
+	userID, ok := c.Locals("userID").(string)
+	if !ok {
+		return respondError(c, h.logger, apperrors.New(apperrors.ErrUnauthorized, "User ID not found in context"))
 	}
 	parsedUserID, err := uuid.Parse(userID)
 	if err != nil {
@@ -26,14 +29,15 @@ func (h *AssignmentController) UploadAssignment(c *fiber.Ctx) error {
 		return respondError(c, h.logger, apperrors.New(apperrors.ErrValidation, "Image file and file upload are required"))
 	}
 
-	imagePath, filePath, err := h.service.SaveSubmissionFiles(image, file, h.imageDir, h.fileDir)
+	tenantID, _ := c.Locals("tenantID").(string)
+	imagePath, filePath, err := h.service.SaveSubmissionFilesForTenant(c.UserContext(), tenantID, image, file, h.imageDir, h.fileDir)
 	if err != nil {
 		return respondError(c, h.logger, err)
 	}
 	submission, err := h.service.SubmitAssignment(dto.AssignmentSubmissionUpload{
+		TenantID:     tenantID,
 		AssignmentID: parsedAssignmentID,
 		UserID:       parsedUserID,
-		DueDate:      c.FormValue("due_date"),
 		Comments:     c.FormValue("comments"),
 		FilePath:     filePath,
 		ImagePath:    imagePath,
@@ -63,7 +67,8 @@ func (h *AssignmentController) AssignToStudents(c *fiber.Ctx) error {
 		return respondError(c, h.logger, apperrors.New(apperrors.ErrUnauthorized, "Invalid Admin ID format"))
 	}
 
-	res, err := h.service.AssignToStudents(c.UserContext(), parsedAdminID, req)
+	tenantID, _ := c.Locals("tenantID").(string)
+	res, err := h.service.AssignToStudentsInTenant(c.UserContext(), tenantID, parsedAdminID, req)
 	if err != nil {
 		return respondError(c, h.logger, err)
 	}

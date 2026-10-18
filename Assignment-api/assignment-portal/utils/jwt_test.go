@@ -20,6 +20,24 @@ func TestJWTManagerGenerateAndParse(t *testing.T) {
 	if claims.UserID != "user-1" || claims.Role != "admin" {
 		t.Fatalf("unexpected claims: %+v", claims)
 	}
+	if claims.TenantID != "default" {
+		t.Fatalf("expected legacy token to use default tenant, got %q", claims.TenantID)
+	}
+}
+
+func TestJWTManagerPreservesTenant(t *testing.T) {
+	manager := NewJWTManager("secret", "assignment-portal", time.Hour)
+	token, err := manager.GenerateForTenant("user-1", "user", "school-42")
+	if err != nil {
+		t.Fatalf("generate token: %v", err)
+	}
+	claims, err := manager.Parse(token)
+	if err != nil {
+		t.Fatalf("parse token: %v", err)
+	}
+	if claims.TenantID != "school-42" {
+		t.Fatalf("expected tenant claim school-42, got %q", claims.TenantID)
+	}
 }
 
 func TestJWTManagerRejectsWrongSecret(t *testing.T) {

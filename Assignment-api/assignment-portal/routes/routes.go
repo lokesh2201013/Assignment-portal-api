@@ -1,26 +1,33 @@
 package routes
 
 import (
-	"github.com/gofiber/fiber/v2"
-	"github.com/lokesh2201013/controllers"
-	"github.com/lokesh2201013/middlewares"
-	"github.com/lokesh2201013/utils"
 	"log/slog"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/jmoiron/sqlx"
+	"github.com/lokesh2201013/controllers"
+	middleware "github.com/lokesh2201013/middlewares"
+	"github.com/lokesh2201013/utils"
 )
 
 type Controllers struct {
 	Users       *controllers.UserController
 	Assignments *controllers.AssignmentController
 	Aid         *controllers.AidController
+	Tenants     *controllers.TenantController
 	JWT         *utils.JWTManager
 	Logger      *slog.Logger
+	DB          *sqlx.DB
 }
 
 func AuthRoutes(app *fiber.App, handlers Controllers) {
 	app.Post("/signup", handlers.Users.Register)
 	app.Post("/login", handlers.Users.Login)
+	app.Post("/tenants", handlers.Tenants.Create)
+	app.Post("/tenant-invitations/accept", handlers.Tenants.AcceptInvitation)
 
-	app.Use(middleware.AuthMiddleware(handlers.JWT, handlers.Logger))
+	app.Use(middleware.AuthMiddleware(handlers.JWT, handlers.Logger, handlers.DB))
+	app.Post("/tenant/invitations", middleware.AdminOnly(handlers.Tenants.Invite))
 
 	app.Get("/admin/getassignments", middleware.AdminOnly(handlers.Assignments.GetAdminAssignments))
 	app.Get("/admin/submissions", middleware.AdminOnly(handlers.Assignments.GetSubmittedAssignments))
@@ -32,8 +39,11 @@ func AuthRoutes(app *fiber.App, handlers Controllers) {
 	app.Post("/admin/aid/getPresignedURL", middleware.AdminOnly(handlers.Aid.GetPresignedURL))
 	app.Post("/admin/aid/uploadFile", middleware.AdminOnly(handlers.Aid.UploadFileHandler))
 	app.Get("/admin/aid/getData", middleware.AdminOnly(handlers.Aid.GetData))
+	app.Post("/admin/aid/getData", middleware.AdminOnly(handlers.Aid.GetData))
 	app.Get("/user/aid/upload", middleware.UserOnly(handlers.Aid.GetHelp))
+	app.Post("/user/aid/upload", middleware.UserOnly(handlers.Aid.GetHelp))
 	app.Post("/user/upload", middleware.UserOnly(handlers.Assignments.UploadAssignment))
+	app.Get("/user/submissions/:submission_id/download", middleware.UserOnly(handlers.Assignments.GetSubmissionDownloadURL))
 	app.Get("/user/admins", handlers.Users.GetAllAdmins)
 	app.Get("/user/assignments/:user_id", middleware.UserOnly(handlers.Assignments.GetUserAssignments))
 	app.Get("/user/assignments", middleware.UserOnly(handlers.Assignments.GetUserAssignments))

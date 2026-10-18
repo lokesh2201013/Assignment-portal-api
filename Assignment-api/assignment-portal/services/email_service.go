@@ -6,6 +6,7 @@ import (
 
 	"github.com/lokesh2201013/apperrors"
 	pb "github.com/lokesh2201013/proto"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -27,7 +28,10 @@ func (n *GRPCAssignmentNotifier) SendAssignmentNotification(ctx context.Context,
 		return "", apperrors.New(apperrors.ErrValidation, "Email request is nil")
 	}
 
-	conn, err := grpc.NewClient(n.addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(n.addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+	)
 	if err != nil {
 		return "", apperrors.Wrap(apperrors.ErrExternal, "Could not connect to email service", err)
 	}

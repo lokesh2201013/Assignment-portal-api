@@ -15,9 +15,24 @@ type AssignmentFilters struct {
 	Branch      string
 	Semester    string
 	SubjectCode string
+	Page        int
+	Limit       int
+}
+
+type PageMetadata struct {
+	Page       int `json:"page"`
+	Limit      int `json:"limit"`
+	Total      int `json:"total"`
+	TotalPages int `json:"total_pages"`
+}
+
+type PaginatedResponse[T any] struct {
+	Data []T          `json:"data"`
+	Page PageMetadata `json:"page"`
 }
 
 type AssignmentSubmissionUpload struct {
+	TenantID     string
 	AssignmentID uuid.UUID
 	UserID       uuid.UUID
 	DueDate      string

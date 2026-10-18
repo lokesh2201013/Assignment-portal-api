@@ -47,7 +47,16 @@ func (h *UserController) Login(c *fiber.Ctx) error {
 }
 
 func (h *UserController) GetAllAdmins(c *fiber.Ctx) error {
-	admins, err := h.service.GetAllAdmins()
+	var admins []dto.UserResponse
+	var err error
+	if tenantService, ok := h.service.(interface {
+		GetAllAdminsInTenant(string) ([]dto.UserResponse, error)
+	}); ok {
+		tenantID, _ := c.Locals("tenantID").(string)
+		admins, err = tenantService.GetAllAdminsInTenant(tenantID)
+	} else {
+		admins, err = h.service.GetAllAdmins()
+	}
 	if err != nil {
 		return respondError(c, h.logger, err)
 	}
