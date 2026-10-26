@@ -1,20 +1,23 @@
+import os
 
-BUCKET_NAME = "my-videos-bucket"
-storage_client = storage.Client()
+from google.cloud import storage
 
-def download_from_gcs(gcs_path: str, local_path: str):
-    bucket = storage_client.bucket(BUCKET_NAME)
-    blob = bucket.blob(gcs_path)
-    blob.download_to_filename(local_path)
-    print(f"Downloaded {gcs_path} → {local_path}")
+from app.config import get_settings
 
 
-def upload_folder_to_gcs(local_folder: str, gcs_prefix: str):
-    bucket = storage_client.bucket(BUCKET_NAME)
+def _bucket():
+    return storage.Client().bucket(get_settings().bucket_name)
+
+
+def download_from_gcs(gcs_path: str, local_path: str) -> None:
+    _bucket().blob(gcs_path).download_to_filename(local_path)
+
+
+def upload_folder_to_gcs(local_folder: str, gcs_prefix: str) -> None:
+    bucket = _bucket()
     for root, _, files in os.walk(local_folder):
-        for file in files:
-            local_file = os.path.join(root, file)
-            rel_path = os.path.relpath(local_file, local_folder)
-            blob = bucket.blob(f"{gcs_prefix}/{rel_path}")
+        for filename in files:
+            local_file = os.path.join(root, filename)
+            relative_path = os.path.relpath(local_file, local_folder)
+            blob = bucket.blob(f"{gcs_prefix}/{relative_path}")
             blob.upload_from_filename(local_file)
-            print(f"Uploaded {local_file} → gs://{BUCKET_NAME}/{gcs_prefix}/{rel_path}")

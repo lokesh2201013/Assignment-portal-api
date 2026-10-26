@@ -5,10 +5,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 )
 
+const DefaultCollectionName = "rag-corpus"
+
+func CollectionName() string {
+	if name := strings.TrimSpace(os.Getenv("RAG_COLLECTION")); name != "" {
+		return name
+	}
+	return DefaultCollectionName
+}
+
 type QdrantPoint struct {
-	ID      int                 `json:"id"`
+	ID      int                    `json:"id"`
 	Vector  []float64              `json:"vector"`
 	Payload map[string]interface{} `json:"payload"`
 }
@@ -30,7 +41,10 @@ func StoreInQdrant(docs []EmbeddedDocument, collectionName string) error {
 	}
 
 	body := QdrantUpsertRequest{Points: points}
-	bodyData, _ := json.Marshal(body)
+	bodyData, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("failed to encode Qdrant points: %w", err)
+	}
 
 	url := fmt.Sprintf("http://localhost:6333/collections/%s/points?wait=true", collectionName)
 	req, err := http.NewRequest("PUT", url, bytes.NewBuffer(bodyData))

@@ -1,50 +1,70 @@
 package main
 
 import (
-	//"fmt"
+	"context"
+	"crypto/subtle"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
-	"time"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/prometheus/client_golang/prometheus"
+	"github.com/joho/godotenv"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/valyala/fasthttp/fasthttpadaptor"
-     "runtime"
-	pb "github.com/lokesh2201013/email-service/proto"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
-	"github.com/lokesh2201013/email-service/database"
-	"github.com/lokesh2201013/email-service/routes"
-	  "github.com/joho/godotenv"
+	"github.com/lokesh2201013/email-service/internal/config"
+	"github.com/lokesh2201013/email-service/internal/grpc/handler"
+	"github.com/lokesh2201013/email-service/internal/repository"
+	"github.com/lokesh2201013/email-service/internal/route"
+	"github.com/lokesh2201013/email-service/internal/service"
+	"github.com/lokesh2201013/email-service/internal/storage"
+	pb "github.com/lokesh2201013/email-service/proto"
 )
 
-type emailServiceServer struct {
-	pb.UnimplementedEmailServiceServer
-}
-
-func getCPUUsage() float64 {
-	percentages, err := cpu.Percent(0, false)
-	if err != nil {
-		logger.Error("database connection failed", "error", err)
+func main() {
+	if err := run(); err != nil {
+		slog.Error("email service stopped", "error", err)
 		os.Exit(1)
 	}
-	defer storage.Close(db)
-	logger.Info("database connected")
+}
 
-	// Initialize repositories
+func run() error {
+	if err := godotenv.Load(); err != nil {
+		slog.Info(".env file not found; using process environment")
+	}
+
+	logger := initLogger()
+	logger.Info("starting email service")
+
+	cfg := config.Load()
+	logger.Info("configuration loaded", "environment", cfg.Environment, "log_level", cfg.LogLevel)
+
+	db, err := storage.Connect(context.Background(), cfg.DSN(), logger)
+	if err != nil {
+		return fmt.Errorf("database connection failed: %w", err)
+	}
+	defer storage.Close(db)
+
+	senderRepo := repository.NewPostgresSenderRepository(db, cfg.SMTPCredentialsKey)
+	if err := senderRepo.MigrateCredentials(context.Background()); err != nil {
+		return fmt.Errorf("SMTP credential migration failed: %w", err)
+	}
+
 	repos := &repository.Repositories{
 		User:         repository.NewPostgresUserRepository(db),
-		Sender:       repository.NewPostgresSenderRepository(db),
+		Sender:       senderRepo,
 		Template:     repository.NewPostgresTemplateRepository(db),
 		Analytics:    repository.NewPostgresAnalyticsRepository(db),
 		EmailMessage: repository.NewPostgresEmailMessageRepository(db),
 	}
-	logger.Info("repositories initialized")
-
-	// Initialize services
 	services := &route.Services{
 		Auth:      service.NewAuthService(repos.User, cfg, logger),
 		Sender:    service.NewSenderService(repos.Sender, logger),
@@ -52,126 +72,96 @@ func getCPUUsage() float64 {
 		Email:     service.NewEmailService(repos.Sender, repos.Analytics, repos.EmailMessage, cfg, logger),
 		Analytics: service.NewAnalyticsService(repos.Analytics, repos.Sender, logger),
 	}
-	logger.Info("services initialized")
 
-	// Start background email queue worker
-	workerCtx, workerCancel := context.WithCancel(context.Background())
-	defer workerCancel()
-	go services.Email.StartQueueWorker(workerCtx)
-
-	// Start gRPC server in background
-	go startGRPCServer(cfg, handler.NewEmailServiceServer(services.Email, cfg.SMTPFrom, logger), logger)
-
-	// Start HTTP server
-	startHTTPServer(cfg, services, logger)
-}
-
-func initLogger() *slog.Logger {
-	logLevel := slog.LevelInfo
-	if levelStr := os.Getenv("LOG_LEVEL"); levelStr != "" {
-		switch levelStr {
-		case "debug", "DEBUG":
-			logLevel = slog.LevelDebug
-		case "warn", "WARN":
-			logLevel = slog.LevelWarn
-		case "error", "ERROR":
-			logLevel = slog.LevelError
-		}
+	grpcListener, err := net.Listen("tcp", fmt.Sprintf(":%s", cfg.GRPCPort))
+	if err != nil {
+		return fmt.Errorf("failed to listen for gRPC on port %s: %w", cfg.GRPCPort, err)
 	}
+	defer grpcListener.Close()
 
-	opts := &slog.HandlerOptions{
-		Level: logLevel,
-	}
+	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(internalGRPCAuthInterceptor(cfg.InternalGRPCToken)))
+	pb.RegisterEmailServiceServer(grpcServer, handler.NewEmailServiceServer(services.Email, logger))
 
-	handler := slog.NewJSONHandler(os.Stdout, opts)
-	return slog.New(handler)
-}
-
-func startHTTPServer(cfg *config.Config, services *route.Services, logger *slog.Logger) {
 	app := fiber.New(fiber.Config{
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
-			logger.Error("unhandled error", "error", err, "path", c.Path())
-			return c.Status(500).JSON(fiber.Map{
+			logger.Error("unhandled HTTP error", "error", err, "path", c.Path())
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"error":   "internal_error",
 				"message": "an unexpected error occurred",
-				"status":  500,
+				"status":  fiber.StatusInternalServerError,
 			})
 		},
 	})
-
-	// Setup routes
 	route.Setup(app, *services, logger)
-
-	// Setup graceful shutdown
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-
-	go func() {
-		for {
-			gauge.Set(getCPUUsage())
-			time.Sleep(5 * time.Second)
-		}
-	}()
-
-	return counter, gauge, histogram, summary
-}
-
-
-func setupMiddleware(app *fiber.App, counter *prometheus.CounterVec, histogram prometheus.Histogram, summary prometheus.Summary) {
-	app.Use(func(c *fiber.Ctx) error {
-		start := time.Now()
-		counter.WithLabelValues(c.Method(), c.Path()).Inc()
-		err := c.Next()
-		duration := time.Since(start).Seconds()
-		histogram.Observe(duration)
-		summary.Observe(duration)
-		return err
-	})
-}
-
-func setupMetricsRoute(app *fiber.App) {
 	app.Get("/metrics", func(c *fiber.Ctx) error {
-		c.Set("Content-Type", "text/plain")
-		handler := promhttp.Handler()
-		fasthttpadaptor.NewFastHTTPHandler(handler)(c.Context())
+		fasthttpadaptor.NewFastHTTPHandler(promhttp.Handler())(c.Context())
 		return nil
 	})
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	workerCtx, stopWorker := context.WithCancel(context.Background())
+	defer stopWorker()
+	go services.Email.StartQueueWorker(workerCtx)
+
+	errs := make(chan error, 2)
+	go func() {
+		logger.Info("HTTP server starting", "address", ":"+cfg.HTTPPort)
+		errs <- app.Listen(":" + cfg.HTTPPort)
+	}()
+	go func() {
+		logger.Info("gRPC server starting", "address", grpcListener.Addr().String())
+		errs <- grpcServer.Serve(grpcListener)
+	}()
+
+	select {
+	case <-ctx.Done():
+		logger.Info("shutdown requested")
+		stopWorker()
+		if err := app.Shutdown(); err != nil {
+			logger.Error("HTTP shutdown failed", "error", err)
+		}
+		grpcServer.GracefulStop()
+		return nil
+	case err := <-errs:
+		stopWorker()
+		_ = app.Shutdown()
+		grpcServer.Stop()
+		if err != nil && !strings.Contains(err.Error(), "Server closed") {
+			return fmt.Errorf("HTTP or gRPC server stopped unexpectedly: %w", err)
+		}
+		return fmt.Errorf("HTTP or gRPC server stopped unexpectedly")
+	}
 }
 
-func startGRPCServer() {
-	listener, err := net.Listen("tcp", ":50051")
-	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
+func initLogger() *slog.Logger {
+	level := slog.LevelInfo
+	switch strings.ToLower(os.Getenv("LOG_LEVEL")) {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
 	}
 
-	grpcServer := grpc.NewServer()
-	pb.RegisterEmailServiceServer(grpcServer, &emailServiceServer{})
-
-	log.Println("gRPC Email Service is running on port 50051")
-	if err := grpcServer.Serve(listener); err != nil {
-		log.Fatalf("Failed to serve: %v", err)
-	}
-	fmt.Println("gRPC server stopped on port 50051")
-	grpcServer.Stop()
+	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 }
 
-func main() {
-	runtime.GOMAXPROCS(2)
-	  err := godotenv.Load()
-    if err != nil {
-        log.Println("Warning: .env file not found, using system environment variables")
-        // Don't exit - continue with system env vars
-    }
-	database.InitDB()
-
-	go startGRPCServer()
- 
-	app := fiber.New()
-	counter, _, histogram, summary := setupMetrics()
-    
-	setupMiddleware(app, counter, histogram, summary)
-	setupMetricsRoute(app)
-	routes.SetupRoutes(app)
-
-	log.Fatal(app.Listen(":3000"))
+func internalGRPCAuthInterceptor(expectedToken string) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		if len(expectedToken) < 32 {
+			return nil, status.Error(codes.Unauthenticated, "internal authorization required")
+		}
+		values, ok := metadata.FromIncomingContext(ctx)
+		if !ok {
+			return nil, status.Error(codes.Unauthenticated, "internal authorization required")
+		}
+		provided := values.Get("x-internal-token")
+		if len(provided) != 1 || subtle.ConstantTimeCompare([]byte(provided[0]), []byte(expectedToken)) != 1 {
+			return nil, status.Error(codes.Unauthenticated, "internal authorization required")
+		}
+		return handler(ctx, req)
+	}
 }

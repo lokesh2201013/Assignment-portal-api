@@ -1,24 +1,38 @@
-from aio_pika import connect_robust, IncomingMessage
-import os
+import asyncio
+import logging
 
-async def handle_message(message: IncomingMessage): 
+from aio_pika import IncomingMessage, connect_robust
+
+from app.config import get_settings
+
+logger = logging.getLogger(__name__)
+
+
+async def handle_message(message: IncomingMessage) -> None:
     async with message.process():
-        video_id = int(message.body.decode())
-        print(f"Received task for video ID: {video_id}")
         try:
-            from app.controllers.controllers import ProcessVideo
-            result = ProcessVideo(video_id, db)
-            print(f"Processing complete for video ID: {video_id}, result: {result}")
-        except Exception as e:
-            print(f"Error processing video ID {video_id}: {e}")
-            
-async def start_consumer():
-    QUEUE_NAME="task_queue"
-    RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@192.168.0.100:5672/")
-    
-    connection = await connect_robust(RABBITMQ_URL)
-    channel = await connection.channel()
-    queue = await channel.declare_queue(QUEUE_NAME, durable=True)
+            video_id = int(message.body.decode())
+        except (UnicodeDecodeError, ValueError):
+            logger.exception("Ignoring invalid video processing message")
+            return
 
-    print(f"🚀 Listening on RabbitMQ queue '{QUEUE_NAME}'...")
-    await queue.consume(lambda msg: handle_message(msg), no_ack=False)
+        from app.controllers.controllers import ProcessVideo
+
+        result = await asyncio.to_thread(ProcessVideo, video_id)
+        logger.info(
+            "Video processing completed",
+            extra={"video_id": video_id, "result": result},
+        )
+
+
+async def start_consumer() -> None:
+    settings = get_settings()
+    connection = await connect_robust(settings.rabbitmq_url)
+    try:
+        channel = await connection.channel()
+        queue = await channel.declare_queue(settings.rabbitmq_queue, durable=True)
+        logger.info("Listening on RabbitMQ queue %s", settings.rabbitmq_queue)
+        await queue.consume(handle_message, no_ack=False)
+        await asyncio.Future()
+    finally:
+        await connection.close()

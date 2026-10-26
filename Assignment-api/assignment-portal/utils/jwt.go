@@ -8,14 +8,19 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-var secretKey = []byte("your-secret-key") 
+var secretKey = []byte("your-secret-key")
 
 func GenerateJWT(userID string, role string) (string, error) {
+	return GenerateForTenant(userID, role, "default")
+}
+
+func GenerateForTenant(userID string, role string, tenantID string) (string, error) {
 	claims := jwt.MapClaims{
-		"exp":  time.Now().Add(24 * time.Hour).Unix(),
-		"iss":  "assignment-portal",
-		"userID":  userID,
-		"role": role,
+		"exp":      time.Now().Add(24 * time.Hour).Unix(),
+		"iss":      "assignment-portal",
+		"userID":   userID,
+		"role":     role,
+		"tenantID": tenantID,
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)

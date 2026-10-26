@@ -1,52 +1,83 @@
-# Operations
+# Assignment API operations
 
-## Tenant onboarding
+## Local setup
 
-- `POST /tenants` creates a pending tenant and sends a 48-hour, single-use owner invitation to `owner_email`.
-- `POST /tenant-invitations/accept` consumes `{ "token", "name", "password", "branch", "semester" }`. Owner invitations activate a pending tenant. Student invitations require branch and semester.
-- `POST /signup` is limited to the legacy `default` tenant. It cannot create membership in an arbitrary tenant.
-- A verified tenant admin can call `POST /tenant/invitations` with `{ "email", "role" }` to invite users/admins. Revoked or pending memberships are rejected by protected-route auth checks.
-- `POST /admin/invitations/bulk` accepts up to 200 invitations with optional role, branch, semester, and course assignments.
-- `POST /admin/roster/import` accepts a multipart CSV file (columns: `email` required; `role`, `name`, `branch`, `semester`, `course_id` optional) for bulk student onboarding.
-- `POST /admin/courses` and `GET /admin/courses` manage courses/classes within the tenant. Assignments can be scoped to a course ID to automatically target enrolled students.
-- `GET /admin/users` lists tenant members with optional `status` filtering (`pending`, `verified`, `revoked`) and pagination.
-- `POST /admin/users/:user_id/status` manages member activation (`verified` or `revoked`). Self-deactivation and deactivating the last verified administrator are prohibited.
-- Set `PUBLIC_APP_URL` to the portal origin used to construct invitation URLs. The email service must be configured and reachable.
+Run commands from this module directory (`Assignment-api/assignment-portal`):
 
-## Assessment and learning workflow
+```powershell
+go test ./...
+go run .
+```
 
-- Assignments support assessment configuration: `max_score` (default 100), `late_policy` (`allow`, `reject`, `penalty`), `late_penalty_percent` (0-100%), `allow_resubmission` (boolean), `max_attempts` (1-20), `reminder_hours` (1-720, default 48h), and `rubrics` (array of criteria with individual `max_points`).
-- `POST /admin/submissions/grade` records submission review with status (`accepted` or `rejected`), numerical `score` or itemized `rubric_scores`, and written `feedback`. If `late_policy` is `penalty`, late submissions automatically apply the penalty deduction upon grading.
-- Resubmissions archive previous attempts into `submission_revisions`. Students review revision history via `GET /user/submissions/:submission_id/revisions`.
+PostgreSQL is required. Set `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, and
+`DB_PORT` in the process environment or a local `.env` file. `ELASTICSEARCH_URL`
+selects the Elasticsearch HTTP(S) endpoint; it defaults to
+`http://localhost:9200`. Startup fails if PostgreSQL cannot initialize or if
+Elasticsearch cannot be reached within five seconds. The HTTP API listens on
+port `8080`.
 
-## Learner dashboard
+Example PowerShell setup (replace the local values; do not commit credentials):
 
-`GET /user/dashboard` provides a single consolidated view for students with:
-- `summary`: total counts for upcoming, overdue, pending review, and graded items.
-- `upcoming`: unsubmitted assignments due in the future.
-- `overdue`: unsubmitted assignments past their due date.
-- `pending_review`: submitted work awaiting instructor grading.
-- `graded`: reviewed assignments with scores, maximum points, written instructor feedback, and status.
-- `reminders`: approaching assignments due within the assignment's configured `reminder_hours` window.
+```powershell
+$env:DB_HOST = "localhost"
+$env:DB_PORT = "5432"
+$env:DB_USER = "postgres"
+$env:DB_PASSWORD = "<local-password>"
+$env:DB_NAME = "assignment_portal"
+$env:ELASTICSEARCH_URL = "http://localhost:9200"
+$env:INTERNAL_GRPC_TOKEN = "<shared-internal-token>"
+go run .
+```
 
-## Upload storage
+The `INTERNAL_GRPC_TOKEN` value must match the email service's shared token.
+The Assignment API sends it as gRPC metadata `x-internal-token`; notification
+requests fail closed when it is unset. See `.env.example` for placeholder
+configuration only; do not use its placeholder values as credentials.
 
-Production startup uses GCS and fails closed if ClamAV is unavailable for an upload. Configure `GCS_BUCKET_NAME`, ADC for the service identity, `GCS_ACCESS_ID`, `GCS_PRIVATE_KEY`, `CLAMAV_ADDRESS`, `UPLOAD_MAX_BYTES`, and `UPLOAD_RETENTION_DAYS`. The default upload limit is 10 MiB. Submission and image uploads accept only the extension/MIME combinations implemented in `services/file_service.go`. Downloads are issued through `GET /user/submissions/:submission_id/download?file=submission|image` and expire after five minutes.
+The assignment/tenant SQL repositories use tables beyond those created by the
+current GORM `AutoMigrate` call. Provision their required schema before using
+the tenant onboarding, assignment service, grading, dashboard, or revision
+routes. This repository currently does not ship a versioned SQL migration for
+that schema. The older signup, login, upload, and video handlers use the GORM
+models and are not a substitute for those SQL tables.
 
-Object metadata records scan status and retention days, but GCS does not expire objects from custom metadata alone. Configure a bucket lifecycle rule to delete `tenant/` objects after the required retention period; do not use a locked retention policy unless its compliance period is intentional, because locked policies cannot be shortened.
+The notifier connects to the email gRPC service at `localhost:50051` and sends
+the `INTERNAL_GRPC_TOKEN` as `x-internal-token`; document
+assistant/file upload handlers connect to the RAG service at `localhost:50052`.
+Those addresses are currently fixed in the handlers. The legacy video handler
+also expects RabbitMQ at `localhost:5672`; its current failure helper terminates
+the API process if the broker is unavailable. These auxiliary services are not
+needed to start the API.
 
-## Analytics reports
+## Implemented HTTP workflows
 
-`POST /admin/aid/getData` accepts one approved identifier or alias rather than generated SQL:
+- `POST /signup` remains limited to the `default` tenant. `POST /login` issues
+  a token for the matched user's tenant; when the same email exists in multiple
+  tenants, provide `tenant_id` to select the account. `POST /tenants` and
+  `POST /tenant-invitations/accept` implement tenant onboarding.
+- Authenticated tenant handlers implement invitations, bulk roster import,
+  courses, and member status. Admin assignment handlers implement paginated
+  assignment/submission lists, assignment creation, grading, and student
+  dashboard/revision reads. The exact paths and methods are in
+  [the OpenAPI document](docs/openapi.yaml).
+- `POST /user/upload` stores multipart files in local `uploads` directories
+  and applies the assignment's due-date/resubmission rules. It does not use
+  GCS, ClamAV, or signed downloads.
+- The legacy assistant/media endpoints are only partially operational and are
+  not described as supported workflows in the OpenAPI document. In particular,
+  the analytics handler asks a local Ollama instance to generate SQL and runs
+  it directly; do not expose that endpoint to untrusted users or production
+  traffic.
 
-- `assignments_by_branch`
-- `submission_status`
-- `overdue_assignments`
+## Configuration limits
 
-Each report is a fixed parameterized query scoped to the authenticated tenant, executes in a read-only transaction, has a five-second statement timeout, and returns at most 1,000 rows.
+- `PUBLIC_APP_URL` supplies the base URL for tenant invitation links. The
+  notifier service must be reachable for invitation/assignment emails.
+- Elasticsearch can be configured with `ELASTICSEARCH_URL`; only one HTTP(S)
+  endpoint is currently supported.
+- Database TLS is currently hard-coded to `sslmode=disable`; use only for
+  local development or change the database configuration before deployment.
+- Do not commit `.env` files or credentials.
 
-## Pagination and observability
-
-`GET /admin/getassignments`, `GET /admin/submissions`, and `GET /user/assignments` accept `page` (default 1) and `limit` (default 25, maximum 100), returning `{ "data": [...], "page": { "page", "limit", "total", "total_pages" } }`.
-
-`GET /metrics` exposes Prometheus text-format request counters. Requests emit OpenTelemetry spans through the configured OTLP HTTP exporter and write audit records to PostgreSQL `audit_logs`. Set `JAEGER_ENDPOINT` or `OTEL_EXPORTER_OTLP_ENDPOINT` to the collector base URL; the service posts to `/v1/traces`. The Assignment API instruments its RAG and email gRPC clients, and those services instrument their gRPC servers. Monitor audit-log retention/partitioning requirements. See [API docs](docs/README.md) and [database docs](docs/database.md).
+See [database notes](docs/database.md) for the current database initialization
+and schema limitations.

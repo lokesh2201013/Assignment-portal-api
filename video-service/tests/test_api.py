@@ -124,6 +124,81 @@ class TestAPI(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["detail"], "Invalid admin API key")
 
+    @patch("app.routes.routes.get_settings")
+    @patch("app.routes.routes.get_video_repository")
+    def test_all_video_admin_routes_require_configured_api_key(self, mock_get_repo, mock_get_settings):
+        mock_get_settings.return_value = SimpleNamespace(admin_api_key="configured-key")
+        mock_repo = MagicMock()
+        mock_repo.list_incidents.return_value = []
+        mock_get_repo.return_value = mock_repo
+        requests = [
+            ("post", "/admin/courses", {"title": "Course"}),
+            ("patch", "/admin/courses/1", {"title": "Updated"}),
+            ("delete", "/admin/courses/1", None),
+            ("post", "/admin/courses/1/lessons", {
+                "video_id": 1, "title": "Lesson",
+            }),
+            ("patch", "/admin/lessons/1", {"title": "Updated"}),
+            ("delete", "/admin/lessons/1", None),
+            ("put", "/admin/courses/1/enrollments", {"learner_id": "learner"}),
+            ("delete", "/admin/courses/1/enrollments/learner", None),
+            ("get", "/admin/courses/1/enrollments", None),
+            ("post", "/admin/videos/1/incidents", {"kind": "processing"}),
+            ("get", "/admin/video-incidents", None),
+            ("post", "/admin/video-incidents/1/resolve", None),
+        ]
+
+        for method, path, payload in requests:
+            with self.subTest(method=method, path=path):
+                response = self.client.request(
+                    method,
+                    path,
+                    json=payload,
+                    headers={"X-User-Role": "admin"},
+                )
+                self.assertEqual(response.status_code, 401)
+
+        mock_get_repo.assert_not_called()
+
+    @patch("app.routes.routes.get_settings")
+    @patch("app.routes.routes.get_video_repository")
+    def test_video_admin_route_accepts_configured_api_key(self, mock_get_repo, mock_get_settings):
+        mock_get_settings.return_value = SimpleNamespace(admin_api_key="configured-key")
+        mock_repo = MagicMock()
+        mock_repo.list_incidents.return_value = []
+        mock_get_repo.return_value = mock_repo
+
+        response = self.client.get(
+            "/admin/video-incidents",
+            headers={"X-Admin-API-Key": "configured-key"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        mock_repo.list_incidents.assert_called_once_with(None)
+
+    @patch("app.routes.routes.get_settings")
+    def test_video_admin_route_fails_closed_when_key_is_unconfigured(self, mock_get_settings):
+        mock_get_settings.return_value = SimpleNamespace(admin_api_key="")
+
+        response = self.client.get(
+            "/admin/video-incidents",
+            headers={"X-Admin-API-Key": "provided-key"},
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"], "Admin API key is not configured")
+
+    @patch("app.routes.routes.get_video_repository")
+    def test_user_role_header_does_not_bypass_learner_auth(self, mock_get_repo):
+        response = self.client.get(
+            "/courses/1/lessons",
+            headers={"X-User-Role": "admin"},
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"], "X-User-ID is required")
+        mock_get_repo.assert_not_called()
+
     @patch("app.controllers.chatcontrollers.get_chat_repository")
     @patch("app.controllers.chatcontrollers.get_settings")
     def test_admin_broadcast_persists_and_broadcasts(self, mock_get_settings, mock_get_repo):

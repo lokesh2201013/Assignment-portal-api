@@ -1,22 +1,15 @@
 package embedding
 
-
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 
-	//"sort"
-	//"strings"
-	//"math"
-
-	"github.com/atgsgrouptest/genet-microservice/RAG-service/logger"
 	"github.com/atgsgrouptest/genet-microservice/RAG-service/models"
-	//"github.com/json-iterator/go"
-	"go.uber.org/zap"
 )
 
 type EmbeddedDocument struct {
@@ -56,6 +49,11 @@ func EmbedText(chunk string) ([]float64, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("embedding API error: %s: %s", resp.Status, body)
+	}
+
 	var result struct {
 		Embedding []float64 `json:"embedding"`
 	}
@@ -68,24 +66,37 @@ func EmbedText(chunk string) ([]float64, error) {
 }
 
 func EmbedFileToCorpus(file *multipart.FileHeader) ([]EmbeddedDocument, error) {
+	if file == nil {
+		return nil, errors.New("file is required")
+	}
+
 	openedFile, err := file.Open()
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
 	defer openedFile.Close()
 
-	contentBytes, err := io.ReadAll(openedFile)
+	return EmbedReaderToCorpus(openedFile)
+}
+
+func EmbedReaderToCorpus(reader io.Reader) ([]EmbeddedDocument, error) {
+	contentBytes, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
+	if len(contentBytes) == 0 {
+		return nil, errors.New("file is empty")
+	}
+
 	content := string(contentBytes)
 	chunks := SplitDocument(content, 250, 20)
 
 	var corpus []EmbeddedDocument
-	for _, chunk := range chunks {
+	var embeddingErrors []error
+	for i, chunk := range chunks {
 		vec, err := EmbedText(chunk)
 		if err != nil {
-			logger.Log.Warn("Embedding failed for chunk", zap.String("chunk", chunk), zap.Error(err))
+			embeddingErrors = append(embeddingErrors, fmt.Errorf("chunk %d: %w", i+1, err))
 			continue
 		}
 		corpus = append(corpus, EmbeddedDocument{
@@ -93,6 +104,9 @@ func EmbedFileToCorpus(file *multipart.FileHeader) ([]EmbeddedDocument, error) {
 			Embedding: vec,
 		})
 	}
-	fmt.Println(corpus)
+
+	if len(embeddingErrors) > 0 {
+		return corpus, fmt.Errorf("failed to embed %d of %d chunks: %w", len(embeddingErrors), len(chunks), errors.Join(embeddingErrors...))
+	}
 	return corpus, nil
 }

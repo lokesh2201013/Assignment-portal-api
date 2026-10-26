@@ -78,21 +78,22 @@ const (
 
 // EmailMessage represents a queued or delivered email with attempt and error tracking.
 type EmailMessage struct {
-	ID          string     `db:"id"`
-	SenderEmail string     `db:"sender_email"`
-	Recipient   string     `db:"recipient"`
-	Subject     string     `db:"subject"`
-	Body        string     `db:"body"`
-	Format      string     `db:"format"`
-	Status      string     `db:"status"`
-	Attempts    int        `db:"attempts"`
-	MaxAttempts int        `db:"max_attempts"`
-	LastError   string     `db:"last_error"`
-	NextRetryAt time.Time  `db:"next_retry_at"`
-	CreatedAt   time.Time  `db:"created_at"`
-	UpdatedAt   time.Time  `db:"updated_at"`
-	DeliveredAt *time.Time `db:"delivered_at"`
-	FailedAt    *time.Time `db:"failed_at"`
+	ID            string     `db:"id"`
+	SenderEmail   string     `db:"sender_email"`
+	Recipient     string     `db:"recipient"`
+	Subject       string     `db:"subject"`
+	Body          string     `db:"body"`
+	Format        string     `db:"format"`
+	Status        string     `db:"status"`
+	Attempts      int        `db:"attempts"`
+	MaxAttempts   int        `db:"max_attempts"`
+	UseGlobalSMTP bool       `db:"use_global_smtp"`
+	LastError     string     `db:"last_error"`
+	NextRetryAt   time.Time  `db:"next_retry_at"`
+	CreatedAt     time.Time  `db:"created_at"`
+	UpdatedAt     time.Time  `db:"updated_at"`
+	DeliveredAt   *time.Time `db:"delivered_at"`
+	FailedAt      *time.Time `db:"failed_at"`
 }
 
 // EmailDeliveryEvent is an immutable record of one delivery attempt. Keeping

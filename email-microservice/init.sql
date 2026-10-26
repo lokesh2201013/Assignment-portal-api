@@ -1,1 +1,2 @@
-CREATE DATABASE email_db;
+-- The PostgreSQL container creates the configured database. The service
+-- initializes its tables on startup.

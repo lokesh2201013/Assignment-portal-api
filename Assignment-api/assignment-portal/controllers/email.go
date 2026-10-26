@@ -3,6 +3,8 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 
 	//"log"
 
@@ -11,6 +13,7 @@ import (
 	pb "github.com/lokesh2201013/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 )
 
 func assignTask(assignments []models.Assignment) (string, error) {
@@ -19,7 +22,7 @@ func assignTask(assignments []models.Assignment) (string, error) {
 	}
 
 	var emails []string
-	var task, branch, duedate,code string
+	var task, branch, duedate, code string
 	var Semester int
 	var adminID uuid.UUID
 
@@ -46,6 +49,10 @@ func SendAssignmentNotification(req *pb.AssignmentEmailRequest) (string, error) 
 	if req == nil {
 		return "", fmt.Errorf("email request is nil")
 	}
+	ctx, err := emailServiceContext(context.Background(), os.Getenv("INTERNAL_GRPC_TOKEN"))
+	if err != nil {
+		return "", err
+	}
 
 	conn, err := grpc.NewClient("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	fmt.Println("gRPC connection created")
@@ -56,7 +63,7 @@ func SendAssignmentNotification(req *pb.AssignmentEmailRequest) (string, error) 
 
 	client := pb.NewEmailServiceClient(conn)
 
-	res, err := client.SendAssignmentNotification(context.Background(), req)
+	res, err := client.SendAssignmentNotification(ctx, req)
 	if err != nil {
 		fmt.Printf("Error sending email: %v\n", err)
 		return "Email not sent", err
@@ -66,3 +73,10 @@ func SendAssignmentNotification(req *pb.AssignmentEmailRequest) (string, error) 
 	return res.Message, nil
 }
 
+func emailServiceContext(ctx context.Context, token string) (context.Context, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, fmt.Errorf("INTERNAL_GRPC_TOKEN must be configured to send email notifications")
+	}
+	return metadata.AppendToOutgoingContext(ctx, "x-internal-token", token), nil
+}

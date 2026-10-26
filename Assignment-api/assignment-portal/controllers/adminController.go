@@ -20,6 +20,7 @@ import (
 
 type AssignmentService interface {
 	ListAssignments(filters dto.AssignmentFilters) ([]models.Assignment, error)
+	ListAssignmentsInTenant(tenantID string, filters dto.AssignmentFilters) ([]models.Assignment, dto.PageMetadata, error)
 	AssignToStudents(ctx context.Context, tenantID string, adminID uuid.UUID, req dto.AssignmentCreateRequest) (map[string]interface{}, error)
 	SubmitAssignment(data dto.AssignmentSubmissionUpload) (models.SubmitAssignment, error)
 	SaveSubmissionFiles(image *multipart.FileHeader, file *multipart.FileHeader, imageDir string, fileDir string) (string, string, error)
@@ -46,15 +47,92 @@ func NewAssignmentController(service AssignmentService, logger *slog.Logger, ima
 }
 
 func (h *AssignmentController) GetAdminAssignments(c *fiber.Ctx) error {
-	assignments, err := h.service.ListAssignments(dto.AssignmentFilters{
+	tenantID, _ := c.Locals("tenantID").(string)
+	assignments, page, err := h.service.ListAssignmentsInTenant(tenantID, dto.AssignmentFilters{
 		Branch:      c.Query("branch"),
 		Semester:    c.Query("semester"),
 		SubjectCode: c.Query("subject_code"),
+		Page:        c.QueryInt("page", 1),
+		Limit:       c.QueryInt("limit", 25),
 	})
 	if err != nil {
 		return respondError(c, h.logger, err)
 	}
-	return c.JSON(assignments)
+	return c.JSON(dto.PaginatedResponse[models.Assignment]{Data: assignments, Page: page})
+}
+
+func (h *AssignmentController) AssignToStudents(c *fiber.Ctx) error {
+	var req dto.AssignmentCreateRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+	}
+	adminID, err := parseActorID(c)
+	if err != nil {
+		return respondError(c, h.logger, err)
+	}
+	tenantID, _ := c.Locals("tenantID").(string)
+	result, err := h.service.AssignToStudents(c.UserContext(), tenantID, adminID, req)
+	if err != nil {
+		return respondError(c, h.logger, err)
+	}
+	return c.JSON(result)
+}
+
+func (h *AssignmentController) GetPendingSubmissions(c *fiber.Ctx) error {
+	assignmentID, err := uuid.Parse(c.Query("assignment_id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid assignment_id"})
+	}
+	tenantID, _ := c.Locals("tenantID").(string)
+	submissions, page, err := h.service.GetPendingSubmissionsPageInTenant(
+		tenantID,
+		assignmentID,
+		c.QueryInt("page", 1),
+		c.QueryInt("limit", 25),
+	)
+	if err != nil {
+		return respondError(c, h.logger, err)
+	}
+	return c.JSON(dto.PaginatedResponse[models.SubmitAssignment]{Data: submissions, Page: page})
+}
+
+func (h *AssignmentController) UploadSubmission(c *fiber.Ctx) error {
+	assignmentID, err := uuid.Parse(c.FormValue("assignment_id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid assignment_id"})
+	}
+	userID, err := parseActorID(c)
+	if err != nil {
+		return respondError(c, h.logger, err)
+	}
+	image, err := c.FormFile("image")
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Image file is required"})
+	}
+	file, err := c.FormFile("file")
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "File upload is required"})
+	}
+	imagePath, filePath, err := h.service.SaveSubmissionFiles(image, file, h.imageDir, h.fileDir)
+	if err != nil {
+		return respondError(c, h.logger, err)
+	}
+	tenantID, _ := c.Locals("tenantID").(string)
+	submission, err := h.service.SubmitAssignment(dto.AssignmentSubmissionUpload{
+		TenantID:     tenantID,
+		AssignmentID: assignmentID,
+		UserID:       userID,
+		FilePath:     filePath,
+		ImagePath:    imagePath,
+		Comments:     c.FormValue("comments"),
+	})
+	if err != nil {
+		return respondError(c, h.logger, err)
+	}
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+		"message":    "Assignment submitted successfully",
+		"submission": submission,
+	})
 }
 
 func AcceptAssignment(c *fiber.Ctx) error {

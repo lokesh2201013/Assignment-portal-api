@@ -1,19 +1,20 @@
 package controllers
 
 import (
-	// "github.com/atgsgrouptest/genet-microservice/RAG-service/Error"
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"mime/multipart"
-	"github.com/atgsgrouptest/genet-microservice/RAG-service/logger"
+
 	"github.com/atgsgrouptest/genet-microservice/RAG-service/embedding"
+	"github.com/atgsgrouptest/genet-microservice/RAG-service/logger"
+	pb "github.com/atgsgrouptest/genet-microservice/RAG-service/proto"
 	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
-	pb "github.com/atgsgrouptest/genet-microservice/RAG-service/proto"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"os"
-	
 )
 
 type RAGServiceServer struct {
@@ -24,7 +25,7 @@ func SendFilesHTTP(c *fiber.Ctx) error {
 	form, err := c.MultipartForm()
 	if err != nil {
 		logger.Log.Error("RAG Service Package Controllers", zap.String("Message", "Failed to parse multipart form"), zap.Error(err))
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"Service Name": "RAG Service Package Controllers",
 			"error":        "Unable to receive files",
 			"details":      err.Error(),
@@ -32,76 +33,97 @@ func SendFilesHTTP(c *fiber.Ctx) error {
 	}
 
 	files := form.File["files"]
-	//var allDocs []embedding.EmbeddedDocument
+	if len(files) == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "No files provided",
+		})
+	}
 
+	type fileError struct {
+		Filename string `json:"filename"`
+		Error    string `json:"error"`
+	}
+	var failures []fileError
+	processed := 0
 	for _, file := range files {
-		 err := ProcessFile(file)
-		if err != nil {
-			logger.Log.Error("Failed to process file", zap.Error(err))
+		if err := ProcessFile(file); err != nil {
+			logger.Log.Error("Failed to process file", zap.String("filename", file.Filename), zap.Error(err))
+			failures = append(failures, fileError{Filename: file.Filename, Error: err.Error()})
 			continue
 		}
-		//allDocs = append(allDocs, docs...)
+		processed++
+	}
+
+	if len(failures) > 0 {
+		return c.Status(fiber.StatusMultiStatus).JSON(fiber.Map{
+			"message":   "Some files could not be fully embedded and stored",
+			"processed": processed,
+			"failed":    len(failures),
+			"errors":    failures,
+		})
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "Files embedded and stored successfully",
+		"message":   "Files embedded and stored successfully",
+		"processed": processed,
+		"failed":    0,
 	})
 }
 
-func ProcessFile(file *multipart.FileHeader) ( error) {
-	corpus, err := embedding.EmbedFileToCorpus(file)
-	if err != nil {
-		return  fmt.Errorf("failed to embed file: %w", err)
+func ProcessFile(file *multipart.FileHeader) error {
+	if file == nil {
+		return errors.New("file is required")
 	}
 
-	err = embedding.StoreInQdrant(corpus, "g-corpus")
+	openedFile, err := file.Open()
 	if err != nil {
-		return fmt.Errorf("failed to store in Qdrant: %w", err)
+		return fmt.Errorf("failed to open file %q: %w", file.Filename, err)
 	}
+	defer openedFile.Close()
 
-	return nil
+	return processFileReader(file.Filename, openedFile)
 }
 
+// ProcessFileContent processes bytes supplied directly by the gRPC upload request.
+func ProcessFileContent(filename string, content []byte) error {
+	return processFileReader(filename, bytes.NewReader(content))
+}
 
+func processFileReader(filename string, reader io.Reader) error {
+	corpus, embedErr := embedding.EmbedReaderToCorpus(reader)
+	if len(corpus) == 0 && embedErr == nil {
+		embedErr = errors.New("no content was embedded")
+	}
+
+	var processingErrors []error
+	if embedErr != nil {
+		processingErrors = append(processingErrors, fmt.Errorf("failed to embed file %q: %w", filename, embedErr))
+	}
+	if len(corpus) > 0 {
+		if err := embedding.StoreInQdrant(corpus, embedding.CollectionName()); err != nil {
+			processingErrors = append(processingErrors, fmt.Errorf("failed to store file %q in Qdrant: %w", filename, err))
+		}
+	}
+
+	return errors.Join(processingErrors...)
+}
 
 func (s *RAGServiceServer) UploadFile(ctx context.Context, req *pb.FileUploadRequest) (*pb.FileUploadResponse, error) {
-	// Convert proto bytes to a virtual file header
-	file := &multipart.FileHeader{
-		Filename: req.Filename,
-		Size:     int64(len(req.Content)),
-		// Not using Header here – populate only if needed
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "upload request is required")
 	}
-
-	tempFile, err := os.CreateTemp("", req.Filename)
-	if err != nil {
+	if err := ProcessFileContent(req.Filename, req.Content); err != nil {
 		return &pb.FileUploadResponse{
 			Message: false,
-		}, status.Errorf(codes.Internal, "Failed to create temp file: %v", err)
-	}
-	defer os.Remove(tempFile.Name())
-	if _, err := tempFile.Write(req.Content); err != nil {
-		return &pb.FileUploadResponse{
-			Message: false,
-		}, status.Errorf(codes.Internal, "Failed to write file: %v", err)
-	}
-	if err := tempFile.Close(); err != nil {
-		return &pb.FileUploadResponse{
-			Message: false,
-		}, status.Errorf(codes.Internal, "Failed to close file: %v", err)
-	}
-
-	file.Filename = tempFile.Name()
-     err = ProcessFile(file)
-	if err != nil {
-		return &pb.FileUploadResponse{
-			Message: false,
-		}, status.Errorf(codes.Internal, "Failed to embed/store file: %v", err)
+			Error:   err.Error(),
+		}, status.Errorf(codes.Internal, "failed to process upload: %v", err)
 	}
 
 	return &pb.FileUploadResponse{
 		Message: true,
 	}, nil
 }
+
 func GetPromptWithContextHTTP(c *fiber.Ctx) error {
 	type reqBody struct {
 		Query string `json:"query"`
@@ -140,13 +162,11 @@ func (s *RAGServiceServer) QueryWithContext(ctx context.Context, req *pb.QueryRe
 }
 
 func ProcessQueryWithContext(query string) (string, error) {
-	// 1. Semantic search in Qdrant
-	chunks, err := embedding.SearchInQdrant(query, "rag-corpus", 5)
+	chunks, err := embedding.SearchInQdrant(query, embedding.CollectionName(), 5)
 	if err != nil {
 		return "", fmt.Errorf("search in Qdrant failed: %w", err)
 	}
 
-	// 2. Ask LLM (e.g. LLaMA) with context
 	answer, err := embedding.AskLlama(chunks, query)
 	if err != nil {
 		return "", fmt.Errorf("LLM generation failed: %w", err)

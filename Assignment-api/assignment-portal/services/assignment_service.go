@@ -84,6 +84,26 @@ func (s *AssignmentService) ListAssignments(filters dto.AssignmentFilters) ([]mo
 	return s.assignments.List(filters)
 }
 
+func (s *AssignmentService) ListAssignmentsInTenant(tenantID string, filters dto.AssignmentFilters) ([]models.Assignment, dto.PageMetadata, error) {
+	repo, ok := s.assignments.(tenantAssignmentRepository)
+	if !ok {
+		assignments, err := s.assignments.List(filters)
+		return assignments, pageMetadata(1, len(assignments), len(assignments)), err
+	}
+	page, limit := filters.Page, filters.Limit
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 25
+	} else if limit > 100 {
+		limit = 100
+	}
+	filters.Page, filters.Limit = page, limit
+	assignments, total, err := repo.ListPageInTenant(tenantID, filters)
+	return assignments, pageMetadata(page, limit, total), err
+}
+
 func (s *AssignmentService) AssignToStudents(ctx context.Context, tenantID string, adminID uuid.UUID, req dto.AssignmentCreateRequest) (map[string]interface{}, error) {
 	req.Branch = strings.ToUpper(strings.TrimSpace(req.Branch))
 	req.Email = strings.TrimSpace(req.Email)
@@ -270,6 +290,11 @@ func (s *AssignmentService) SaveSubmissionFiles(image *multipart.FileHeader, fil
 	}
 	filePath, err := s.fileSaver.Save(file, fileDir)
 	if err != nil {
+		if saver, ok := s.fileSaver.(interface {
+			Delete(context.Context, string) error
+		}); ok {
+			_ = saver.Delete(context.Background(), imagePath)
+		}
 		return "", "", apperrors.Wrap(apperrors.ErrUnexpected, "Failed to save file", err)
 	}
 	return imagePath, filePath, nil

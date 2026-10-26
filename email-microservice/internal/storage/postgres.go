@@ -57,6 +57,7 @@ func createTables(ctx context.Context, db *sqlx.DB, logger *slog.Logger) error {
 		createTemplatesTable,
 		createAnalyticsTable,
 		createEmailMessagesTable,
+		addGlobalSMTPSupport,
 		createEmailDeliveryEventsTable,
 		createIndexes,
 	}
@@ -136,6 +137,7 @@ const (
 			body TEXT NOT NULL,
 			format VARCHAR(10) DEFAULT 'text',
 			status VARCHAR(20) DEFAULT 'queued',
+			use_global_smtp BOOLEAN NOT NULL DEFAULT false,
 			attempts INTEGER DEFAULT 0,
 			max_attempts INTEGER DEFAULT 3,
 			last_error TEXT DEFAULT '',
@@ -156,6 +158,11 @@ const (
 			error TEXT NOT NULL DEFAULT '',
 			occurred_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
+	`
+
+	addGlobalSMTPSupport = `
+		ALTER TABLE email_messages
+		ADD COLUMN IF NOT EXISTS use_global_smtp BOOLEAN NOT NULL DEFAULT false;
 	`
 
 	createIndexes = `

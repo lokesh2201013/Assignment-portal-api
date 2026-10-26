@@ -63,18 +63,57 @@ func (s *EmailService) SetSMTPSender(sender SMTPSender) {
 	s.smtpSender = sender
 }
 
-// SendEmail enqueues emails into the durable queue and triggers queue dispatch.
-func (s *EmailService) SendEmail(ctx context.Context, req *dto.SendEmailRequest) (*dto.SendEmailResponse, error) {
-	// Validate input
+// SendEmailForUser enqueues an email only when the authenticated account owns
+// the explicitly configured, verified sender identity.
+func (s *EmailService) SendEmailForUser(ctx context.Context, username string, req *dto.SendEmailRequest) (*dto.SendEmailResponse, error) {
 	if err := s.validateSendRequest(req); err != nil {
 		return nil, err
 	}
-
-	sender, err := s.resolveSender(ctx, req.From)
+	if username == "" {
+		return nil, apperror.Unauthorized("authenticated user is required")
+	}
+	if s.senderRepo == nil {
+		return nil, apperror.Internal("sender repository is unavailable", errors.New("sender repository is nil"))
+	}
+	sender, err := s.senderRepo.GetByEmail(ctx, req.From)
 	if err != nil {
 		return nil, err
 	}
+	if !sender.Verified {
+		return nil, apperror.Validation("sender email is not verified")
+	}
+	if sender.AdminName != username {
+		return nil, apperror.Forbidden("sender identity is not owned by authenticated user")
+	}
+	return s.enqueueEmail(ctx, req, sender, false)
+}
 
+// SendInternalNotification uses only the service-configured SMTP identity and
+// is reserved for authenticated internal gRPC notifications.
+func (s *EmailService) SendInternalNotification(ctx context.Context, req *dto.SendEmailRequest) (*dto.SendEmailResponse, error) {
+	if s.cfg == nil || s.cfg.SMTPFrom == "" || s.cfg.SMTPHost == "" ||
+		s.cfg.SMTPUsername == "" || s.cfg.SMTPPassword == "" || s.cfg.SMTPPort <= 0 {
+		return nil, apperror.Internal("internal SMTP sender is not configured", errors.New("incomplete global SMTP configuration"))
+	}
+	if req == nil {
+		return nil, apperror.Validation("email request is required")
+	}
+	req.From = s.cfg.SMTPFrom
+	if err := s.validateSendRequest(req); err != nil {
+		return nil, err
+	}
+	sender := &domain.Sender{
+		Email:    s.cfg.SMTPFrom,
+		SMTPHost: s.cfg.SMTPHost,
+		SMTPPort: s.cfg.SMTPPort,
+		Username: s.cfg.SMTPUsername,
+		Password: s.cfg.SMTPPassword,
+		Verified: true,
+	}
+	return s.enqueueEmail(ctx, req, sender, true)
+}
+
+func (s *EmailService) enqueueEmail(ctx context.Context, req *dto.SendEmailRequest, sender *domain.Sender, useGlobalSMTP bool) (*dto.SendEmailResponse, error) {
 	maxRetries := 3
 	if s.cfg != nil && s.cfg.EmailMaxRetries > 0 {
 		maxRetries = s.cfg.EmailMaxRetries
@@ -88,18 +127,19 @@ func (s *EmailService) SendEmail(ctx context.Context, req *dto.SendEmailRequest)
 		id := uuid.New().String()
 		messageIDs = append(messageIDs, id)
 		messages = append(messages, &domain.EmailMessage{
-			ID:          id,
-			SenderEmail: sender.Email,
-			Recipient:   to,
-			Subject:     req.Subject,
-			Body:        req.Body,
-			Format:      req.Format,
-			Status:      domain.EmailStatusQueued,
-			Attempts:    0,
-			MaxAttempts: maxRetries,
-			NextRetryAt: now,
-			CreatedAt:   now,
-			UpdatedAt:   now,
+			ID:            id,
+			SenderEmail:   sender.Email,
+			Recipient:     to,
+			Subject:       req.Subject,
+			Body:          req.Body,
+			Format:        req.Format,
+			Status:        domain.EmailStatusQueued,
+			Attempts:      0,
+			MaxAttempts:   maxRetries,
+			UseGlobalSMTP: useGlobalSMTP,
+			NextRetryAt:   now,
+			CreatedAt:     now,
+			UpdatedAt:     now,
 		})
 	}
 
@@ -149,7 +189,24 @@ func (s *EmailService) ProcessQueue(ctx context.Context) (int, error) {
 
 // processSingleMessage attempts to send an individual queued message.
 func (s *EmailService) processSingleMessage(ctx context.Context, msg *domain.EmailMessage) {
-	sender, err := s.resolveSender(ctx, msg.SenderEmail)
+	var sender *domain.Sender
+	var err error
+	if msg.UseGlobalSMTP {
+		if s.cfg == nil || s.cfg.SMTPFrom != msg.SenderEmail {
+			err = errors.New("queued internal message does not match configured SMTP sender")
+		} else {
+			sender = &domain.Sender{
+				Email:    s.cfg.SMTPFrom,
+				SMTPHost: s.cfg.SMTPHost,
+				SMTPPort: s.cfg.SMTPPort,
+				Username: s.cfg.SMTPUsername,
+				Password: s.cfg.SMTPPassword,
+				Verified: true,
+			}
+		}
+	} else {
+		sender, err = s.resolveSender(ctx, msg.SenderEmail)
+	}
 	if err != nil {
 		s.handleDeliveryFailure(ctx, msg, fmt.Errorf("sender identity unavailable: %w", err))
 		return
@@ -461,43 +518,25 @@ func (s *EmailService) analyticsToDTO(analytics *domain.Analytics, senderEmail s
 	}
 }
 
-// resolveSender looks up a verified sender identity, or uses SMTP config
-// when From is the service default (assignment notifications have no From field).
+// resolveSender returns only an explicitly stored verified sender identity.
 func (s *EmailService) resolveSender(ctx context.Context, from string) (*domain.Sender, error) {
-	if from == "" {
-		if s.cfg == nil || s.cfg.SMTPFrom == "" {
-			return nil, apperror.Validation("from email is required")
-		}
-		from = s.cfg.SMTPFrom
+	if from == "" || s.senderRepo == nil {
+		return nil, apperror.Validation("sender email not found or not verified")
 	}
 
-	if s.senderRepo != nil {
-		sender, err := s.senderRepo.GetByEmail(ctx, from)
-		if err == nil {
-			if !sender.Verified {
-				return nil, apperror.Validation("sender email is not verified")
-			}
-			return sender, nil
-		}
+	sender, err := s.senderRepo.GetByEmail(ctx, from)
+	if err != nil {
+		return nil, err
 	}
-
-	if s.cfg != nil && from == s.cfg.SMTPFrom {
-		return &domain.Sender{
-			Email:    s.cfg.SMTPFrom,
-			SMTPHost: s.cfg.SMTPHost,
-			SMTPPort: s.cfg.SMTPPort,
-			Username: s.cfg.SMTPUsername,
-			Password: s.cfg.SMTPPassword,
-			Verified: true,
-		}, nil
+	if !sender.Verified {
+		return nil, apperror.Validation("sender email is not verified")
 	}
-
-	return nil, apperror.Validation("sender email not found or not verified")
+	return sender, nil
 }
 
 // validateSendRequest validates send email input.
 func (s *EmailService) validateSendRequest(req *dto.SendEmailRequest) error {
-	if len(req.From) == 0 && (s.cfg == nil || s.cfg.SMTPFrom == "") {
+	if req == nil || len(req.From) == 0 {
 		return apperror.Validation("from email is required")
 	}
 	if len(req.To) == 0 {

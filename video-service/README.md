@@ -21,11 +21,11 @@ FastAPI serves Swagger UI at `http://localhost:5000/docs`, ReDoc at `/redoc`, Op
 - `DELETE /api/users/{target_user_id}` removes a connected user. Requires the `X-Admin-API-Key` header.
 - `WS /ws/{user_id}/{username}` accepts JSON text frames. Send `{"type":"chat_message","message":"..."}` to broadcast a chat message or `{"type":"ping"}` for a pong response.
 
-User chat messages and system broadcasts are persisted to PostgreSQL. Apply `schema.sql` before using chat history. Set a strong, non-empty `ADMIN_API_KEY`; admin routes return `503` when it is not configured and reject missing or invalid keys. WebSocket user IDs and usernames are currently client-supplied and are not authenticated, so deployments requiring verified identities must add token validation before exposing chat publicly.
+User chat messages and system broadcasts are persisted to PostgreSQL. Apply `schema.sql` before using chat history. Set a strong, non-empty `ADMIN_API_KEY`; every `/admin/...` video management route and the chat broadcast/kick routes require it in `X-Admin-API-Key`. Missing or invalid credentials are rejected, and admin routes fail closed with `503` if the key is not configured. `X-User-Role` is not an authentication credential and never grants administrator access. WebSocket user IDs and usernames are currently client-supplied and are not authenticated, so deployments requiring verified identities must add token validation before exposing chat publicly.
 
 ## Configuration and services
 
-Settings are loaded from environment variables and `.env`: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_MIN_CONN`, `DB_MAX_CONN`, `BUCKET_NAME`, `GCS_SIGNED_URL_HOURS`, `RABBITMQ_URL`, `RABBITMQ_QUEUE`, `START_WORKER`, `CORS_ORIGINS`, `MAX_CHAT_USERS`, `ADMIN_API_KEY`, `LOG_LEVEL`, and `JAEGER_ENDPOINT`/`OTEL_EXPORTER_OTLP_ENDPOINT` (default collector base `http://localhost:4318`). Set Google Application Default Credentials for GCS access.
+Settings are read from environment variables: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_MIN_CONN`, `DB_MAX_CONN`, `BUCKET_NAME`, `GCS_SIGNED_URL_HOURS`, `RABBITMQ_URL`, `RABBITMQ_QUEUE`, `START_WORKER`, and `ADMIN_API_KEY`. The RabbitMQ consumer is disabled unless `START_WORKER=true`. Database and Google Cloud clients are created only when their services are used; importing the application does not connect to PostgreSQL, RabbitMQ, or GCS. Set Google Application Default Credentials for GCS access.
 
 The background consumer expects integer video IDs on its durable RabbitMQ queue and calls the local FFmpeg processing controller. See [database setup](docs/database.md).
 

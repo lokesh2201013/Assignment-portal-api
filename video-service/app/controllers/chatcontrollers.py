@@ -16,6 +16,17 @@ logger = logging.getLogger(__name__)
 
 chat_router = APIRouter(tags=["Chat API"])
 
+
+async def require_admin_api_key(
+    x_admin_api_key: str | None = Header(default=None, alias="X-Admin-API-Key"),
+) -> None:
+    configured_key = get_settings().admin_api_key
+    if not configured_key:
+        raise HTTPException(status_code=503, detail="Admin API key is not configured")
+    if x_admin_api_key is None or not hmac.compare_digest(x_admin_api_key, configured_key):
+        raise HTTPException(status_code=401, detail="Invalid admin API key")
+
+
 # Pydantic models for API responses
 
 
@@ -119,7 +130,7 @@ async def chat_root():
         "current_users": len(manager.active_connections)
     }
 
-@app.websocket("/ws/{user_id}/{username}")
+@chat_router.websocket("/ws/{user_id}/{username}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str, username: str):
     """WebSocket endpoint for real-time chat communication"""
     username = username.strip()
@@ -195,7 +206,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str, username: str):
                 "total_users": len(manager.active_connections)
             })
 
-@app.get("/api/stats", response_model=ChatStats)
+@chat_router.get("/api/stats", response_model=ChatStats)
 async def get_chat_stats():
     """Get current chat statistics and active users"""
     return ChatStats(
@@ -211,7 +222,7 @@ async def get_chat_stats():
         ]
     )
 
-@app.get("/api/users", response_model=List[User])
+@chat_router.get("/api/users", response_model=List[User])
 async def get_active_users():
     """Get list of currently active users"""
     return [
@@ -266,11 +277,11 @@ async def broadcast_system_message(
 @chat_router.delete("/api/users/{target_user_id}")
 async def kick_user(target_user_id: str, _: None = Depends(require_admin_api_key)):
     """Remove a user from the chat (admin endpoint)"""
-    if user_id not in manager.active_connections:
+    if target_user_id not in manager.active_connections:
         raise HTTPException(status_code=404, detail="User not found")
     
-    websocket = manager.active_connections[user_id]
-    username = manager.users.get(user_id, {}).get("username", "Unknown")
+    websocket = manager.active_connections[target_user_id]
+    username = manager.users.get(target_user_id, {}).get("username", "Unknown")
     
     logger.info(f"User {username} (ID: {target_user_id}) is being kicked.")
     try:
@@ -284,19 +295,5 @@ async def kick_user(target_user_id: str, _: None = Depends(require_admin_api_key
     return {
         "status": "success",
         "message": f"User {username} has been removed",
-        "user_id": user_id
+        "user_id": target_user_id
     }
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "active_connections": len(manager.active_connections),
-        "max_users": manager.max_users
-    }
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)

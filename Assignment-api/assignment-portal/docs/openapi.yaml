@@ -3,8 +3,10 @@ info:
   title: Assignment Portal API
   version: 1.0.0
   description: >-
-    Tenant-aware assignment, submission, upload, video-ingestion, and assistant APIs.
-    Protected routes use a JWT bearer token. Tenant scope comes from the validated token.
+    Documents the HTTP handlers registered by this module. Service-backed
+    tenant and assignment workflows require the SQL schema described in
+    docs/database.md. Legacy assistant/media handlers have the limitations
+    listed in OPERATIONS.md.
 servers:
   - url: http://localhost:8080
 security:
@@ -14,38 +16,54 @@ tags:
   - name: Tenants
   - name: Assignments
   - name: Submissions
-  - name: Assistant and media
+  - name: Legacy assistant and media
 paths:
   /signup:
     post:
       tags: [Authentication]
-      summary: Register a user in the default tenant
+      summary: Register a legacy default-tenant user
       security: []
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/RegisterRequest' }
+            schema:
+              type: object
+              required: [name, email, password, role]
+              properties:
+                name: { type: string }
+                email: { type: string, format: email }
+                password: { type: string, format: password }
+                role: { type: string, enum: [user, admin] }
+                branch: { type: string }
+                semester: { type: integer }
       responses:
         '201': { description: User created }
-        '400': { $ref: '#/components/responses/Error' }
+        '400': { description: Invalid input }
   /login:
     post:
       tags: [Authentication]
-      summary: Authenticate and issue a JWT
+      summary: Authenticate a legacy user
       security: []
+      description: If an email belongs to multiple tenants, provide tenant_id to select the intended account. A unique match needs no tenant_id.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/LoginRequest' }
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                tenant_id: { type: string }
+                email: { type: string, format: email }
+                password: { type: string, format: password }
       responses:
-        '200': { description: Authenticated; returns token }
-        '401': { $ref: '#/components/responses/Error' }
+        '200': { description: Login succeeded; returns a bearer token }
+        '401': { description: Invalid credentials }
   /tenants:
     post:
       tags: [Tenants]
-      summary: Create a tenant and email an owner invitation
+      summary: Create a tenant and send an owner invitation
       security: []
       requestBody:
         required: true
@@ -55,16 +73,16 @@ paths:
               type: object
               required: [tenant_id, name, owner_email]
               properties:
-                tenant_id: { type: string, pattern: '^[a-z0-9][a-z0-9-]{2,62}$' }
+                tenant_id: { type: string }
                 name: { type: string }
                 owner_email: { type: string, format: email }
       responses:
         '201': { description: Tenant created and invitation sent }
-        '400': { $ref: '#/components/responses/Error' }
+        '400': { description: Invalid tenant request }
   /tenant-invitations/accept:
     post:
       tags: [Tenants]
-      summary: Accept an owner or member invitation
+      summary: Accept an invitation and receive a tenant bearer token
       security: []
       requestBody:
         required: true
@@ -80,13 +98,13 @@ paths:
                 branch: { type: string }
                 semester: { type: integer }
       responses:
-        '201': { description: Membership activated; returns tenant, role, and JWT }
-        '400': { $ref: '#/components/responses/Error' }
+        '201': { description: Invitation accepted }
+        '400': { description: Invalid or expired invitation }
   /tenant/invitations:
     post:
       tags: [Tenants]
-      summary: Invite a user or administrator to the current tenant
-      description: Requires an administrator JWT. Invitation roles are user or admin.
+      summary: Invite a member to the active tenant
+      description: Requires an administrator bearer token.
       requestBody:
         required: true
         content:
@@ -97,33 +115,47 @@ paths:
               properties:
                 email: { type: string, format: email }
                 role: { type: string, enum: [user, admin] }
+                name: { type: string }
+                branch: { type: string }
+                semester: { type: integer }
+                course_id: { type: string, format: uuid }
       responses:
         '201': { description: Invitation created }
-        '401': { $ref: '#/components/responses/Error' }
-        '403': { $ref: '#/components/responses/Error' }
+        '401': { description: Authentication required }
+        '403': { description: Administrator access required }
   /admin/invitations/bulk:
     post:
       tags: [Tenants]
-      summary: Bulk invite users or administrators to the tenant
-      description: Allows inviting up to 200 users at once with role, branch, semester, and course assignments.
+      summary: Invite multiple members
+      description: Service validation currently limits imports to 200 entries.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/BulkInvitationRequest' }
+            schema:
+              type: object
+              required: [invitations]
+              properties:
+                invitations:
+                  type: array
+                  items:
+                    type: object
+                    required: [email]
+                    properties:
+                      email: { type: string, format: email }
+                      role: { type: string, enum: [user, admin] }
+                      name: { type: string }
+                      branch: { type: string }
+                      semester: { type: integer }
+                      course_id: { type: string, format: uuid }
       responses:
-        '200':
-          description: Summary of invited and skipped invitations
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/RosterImportResult' }
-        '400': { $ref: '#/components/responses/Error' }
-        '403': { $ref: '#/components/responses/Error' }
+        '201': { description: Invitations processed }
+        '400': { description: Invalid request }
+        '403': { description: Administrator access required }
   /admin/roster/import:
     post:
       tags: [Tenants]
-      summary: Import a student roster from a CSV file
-      description: Parses a CSV file (header with email required; optional name, role, branch, semester, course_id).
+      summary: Import a roster from CSV
       requestBody:
         required: true
         content:
@@ -132,103 +164,84 @@ paths:
               type: object
               required: [file]
               properties:
-                file: { type: string, format: binary, description: CSV roster file up to 200 entries }
+                file: { type: string, format: binary }
       responses:
-        '201':
-          description: Roster import processed
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/RosterImportResult' }
-        '400': { $ref: '#/components/responses/Error' }
-        '403': { $ref: '#/components/responses/Error' }
+        '201': { description: Roster import processed }
+        '400': { description: Invalid CSV or missing file }
+        '403': { description: Administrator access required }
   /admin/courses:
+    get:
+      tags: [Tenants]
+      summary: List courses in the active tenant
+      responses:
+        '200': { description: Course list }
+        '403': { description: Administrator access required }
     post:
       tags: [Tenants]
-      summary: Create a course or class
+      summary: Create a course in the active tenant
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/CourseCreateRequest' }
+            schema:
+              type: object
+              required: [code, name, branch, semester]
+              properties:
+                code: { type: string }
+                name: { type: string }
+                branch: { type: string }
+                semester: { type: integer }
       responses:
-        '201':
-          description: Course created
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Course' }
-        '400': { $ref: '#/components/responses/Error' }
-        '403': { $ref: '#/components/responses/Error' }
-    get:
-      tags: [Tenants]
-      summary: List all courses in the tenant
-      responses:
-        '200':
-          description: List of courses
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: array
-                    items: { $ref: '#/components/schemas/Course' }
-        '403': { $ref: '#/components/responses/Error' }
+        '201': { description: Course created }
+        '400': { description: Invalid course request }
+        '403': { description: Administrator access required }
   /admin/users:
     get:
       tags: [Tenants]
-      summary: List tenant members
-      description: Returns members filtered optionally by status (pending, verified, revoked).
+      summary: List members in the active tenant
       parameters:
         - { in: query, name: status, schema: { type: string, enum: [pending, verified, revoked] } }
-        - { in: query, name: page, schema: { type: integer, minimum: 1, default: 1 } }
-        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+        - { in: query, name: page, schema: { type: integer, default: 1 } }
+        - { in: query, name: limit, schema: { type: integer, default: 25, maximum: 100 } }
       responses:
-        '200':
-          description: Paginated member list
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: array
-                    items: { $ref: '#/components/schemas/TenantMember' }
-                  page: { $ref: '#/components/schemas/PageMetadata' }
-        '403': { $ref: '#/components/responses/Error' }
+        '200': { description: Paginated member list }
+        '403': { description: Administrator access required }
   /admin/users/{user_id}/status:
     post:
       tags: [Tenants]
-      summary: Manage or deactivate member status
-      description: Activate or deactivate a tenant user. Administrators cannot deactivate themselves or the last remaining administrator.
+      summary: Change a tenant member's status
       parameters:
         - { in: path, name: user_id, required: true, schema: { type: string, format: uuid } }
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/MembershipStatusRequest' }
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [verified, revoked] }
       responses:
-        '200': { description: Member status updated }
-        '400': { $ref: '#/components/responses/Error' }
-        '403': { $ref: '#/components/responses/Error' }
-        '404': { $ref: '#/components/responses/Error' }
+        '200': { description: Membership updated }
+        '400': { description: Invalid user or status }
+        '403': { description: Administrator access required }
   /admin/getassignments:
     get:
       tags: [Assignments]
-      summary: List tenant assignments
+      summary: List assignments in the active tenant
       parameters:
         - { in: query, name: branch, schema: { type: string } }
         - { in: query, name: semester, schema: { type: integer } }
         - { in: query, name: subject_code, schema: { type: string } }
-        - { in: query, name: page, schema: { type: integer, minimum: 1, default: 1 } }
-        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+        - { in: query, name: page, schema: { type: integer, default: 1 } }
+        - { in: query, name: limit, schema: { type: integer, default: 25, maximum: 100 } }
       responses:
-        '200': { description: Paginated assignments }
-        '403': { $ref: '#/components/responses/Error' }
+        '200': { description: Paginated assignment list }
+        '403': { description: Administrator access required }
   /admin/assign_assignments:
     post:
       tags: [Assignments]
-      summary: Assign work to matching students
+      summary: Create an assignment and target matching students
       requestBody:
         required: true
         content:
@@ -236,7 +249,8 @@ paths:
             schema: { $ref: '#/components/schemas/AssignmentCreateRequest' }
       responses:
         '200': { description: Assignment and notification summary }
-        '400': { $ref: '#/components/responses/Error' }
+        '400': { description: Invalid assignment request }
+        '403': { description: Administrator access required }
   /admin/submissions:
     get:
       tags: [Submissions]
@@ -244,34 +258,15 @@ paths:
       parameters:
         - { in: query, name: assignment_id, required: true, schema: { type: string, format: uuid } }
         - { in: query, name: page, schema: { type: integer, default: 1 } }
-        - { in: query, name: limit, schema: { type: integer, maximum: 100, default: 25 } }
+        - { in: query, name: limit, schema: { type: integer, default: 25, maximum: 100 } }
       responses:
-        '200': { description: Paginated submissions }
-        '400': { $ref: '#/components/responses/Error' }
-  /admin/assignments/accept:
-    post:
-      tags: [Submissions]
-      summary: Accept submissions
-      parameters:
-        - { in: query, name: assignment_id, required: true, schema: { type: string, format: uuid } }
-        - { in: query, name: id, required: true, description: Comma-separated student UUIDs, schema: { type: string } }
-      responses:
-        '200': { description: Submissions accepted }
-  /admin/assignments/reject:
-    post:
-      tags: [Submissions]
-      summary: Reject submissions
-      parameters:
-        - { in: query, name: assignment_id, required: true, schema: { type: string, format: uuid } }
-        - { in: query, name: id, required: true, description: Comma-separated student UUIDs, schema: { type: string } }
-        - { in: query, name: reason, schema: { type: string } }
-      responses:
-        '200': { description: Submissions rejected }
+        '200': { description: Paginated pending submissions }
+        '400': { description: Invalid assignment_id }
+        '403': { description: Administrator access required }
   /admin/submissions/grade:
     post:
       tags: [Submissions]
-      summary: Grade a student submission
-      description: Record marks/score or individual rubric points, status (accepted or rejected), and written feedback. Late penalties are automatically applied if the assignment policy is penalty.
+      summary: Grade a submission
       requestBody:
         required: true
         content:
@@ -279,13 +274,32 @@ paths:
             schema: { $ref: '#/components/schemas/GradeSubmissionRequest' }
       responses:
         '200': { description: Submission graded }
-        '400': { $ref: '#/components/responses/Error' }
-        '403': { $ref: '#/components/responses/Error' }
+        '400': { description: Invalid grading request }
+        '403': { description: Administrator access required }
+  /admin/assignments/accept:
+    post:
+      tags: [Submissions]
+      summary: Accept legacy submissions by student ID
+      parameters:
+        - { in: query, name: id, required: true, description: Comma-separated student UUIDs, schema: { type: string } }
+      responses:
+        '200': { description: Submissions accepted }
+        '403': { description: Administrator access required }
+  /admin/assignments/reject:
+    post:
+      tags: [Submissions]
+      summary: Reject legacy submissions by student ID
+      parameters:
+        - { in: query, name: id, required: true, description: Comma-separated student UUIDs, schema: { type: string } }
+        - { in: query, name: reason, schema: { type: string } }
+      responses:
+        '200': { description: Submissions rejected }
+        '403': { description: Administrator access required }
   /user/upload:
     post:
       tags: [Submissions]
-      summary: Submit assignment files
-      description: Requires a user JWT. Upload both an image and a document; configured size, due date, resubmission limits, and malware checks apply.
+      summary: Submit files for the authenticated user
+      description: Stores uploaded files locally and applies the assignment's due-date and resubmission rules. No GCS, malware scanning, or signed download is implemented.
       requestBody:
         required: true
         content:
@@ -299,99 +313,62 @@ paths:
                 image: { type: string, format: binary }
                 file: { type: string, format: binary }
       responses:
-        '201': { description: Submission created }
-        '400': { $ref: '#/components/responses/Error' }
-        '403': { $ref: '#/components/responses/Error' }
-  /user/dashboard:
-    get:
-      tags: [Assignments]
-      summary: Retrieve learner dashboard
-      description: Single unified view for learners with upcoming tasks, overdue work, submissions pending review, graded work with marks and feedback, and approaching deadline reminders.
-      responses:
-        '200':
-          description: Learner dashboard overview
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/LearnerDashboard' }
-        '401': { $ref: '#/components/responses/Error' }
-  /user/assignments:
-    get:
-      tags: [Assignments]
-      summary: List the authenticated user's assignments
-      parameters:
-        - { in: query, name: page, schema: { type: integer, default: 1 } }
-        - { in: query, name: limit, schema: { type: integer, maximum: 100, default: 25 } }
-      responses:
-        '200': { description: Paginated assignments and submissions }
+        '201': { description: Submission stored }
+        '400': { description: Missing or invalid upload data }
   /user/assignments/{user_id}:
     get:
       tags: [Assignments]
-      summary: Legacy user-scoped assignment list
-      description: The path user_id must match the authenticated principal. Prefer /user/assignments.
+      summary: List legacy assignment submissions for a user
       parameters:
         - { in: path, name: user_id, required: true, schema: { type: string, format: uuid } }
-        - { in: query, name: page, schema: { type: integer, default: 1 } }
-        - { in: query, name: limit, schema: { type: integer, maximum: 100, default: 25 } }
       responses:
-        '200': { description: Paginated assignments and submissions }
-        '403': { $ref: '#/components/responses/Error' }
-  /user/submissions/{submission_id}/download:
+        '200': { description: Assignment submission list }
+        '403': { description: User access required }
+  /user/dashboard:
     get:
-      tags: [Submissions]
-      summary: Get a short-lived download URL for an owned submission file
-      parameters:
-        - { in: path, name: submission_id, required: true, schema: { type: string, format: uuid } }
-        - { in: query, name: file, schema: { type: string, enum: [submission, image], default: submission } }
+      tags: [Assignments]
+      summary: Get the active user's assignment dashboard
       responses:
-        '200': { description: Signed download URL, valid for five minutes }
-        '404': { $ref: '#/components/responses/Error' }
+        '200': { description: Dashboard summary and assignment buckets }
+        '403': { description: User access required }
   /user/submissions/{submission_id}/revisions:
     get:
       tags: [Submissions]
-      summary: Get previous revision attempts for a submission
+      summary: List previous attempts for a submission
       parameters:
         - { in: path, name: submission_id, required: true, schema: { type: string, format: uuid } }
       responses:
-        '200':
-          description: Revisions history
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: array
-                    items: { $ref: '#/components/schemas/SubmissionRevision' }
-        '401': { $ref: '#/components/responses/Error' }
-        '403': { $ref: '#/components/responses/Error' }
+        '200': { description: Submission revision history }
+        '403': { description: User access required }
   /user/admins:
     get:
       tags: [Assignments]
-      summary: List administrators in the current tenant
+      summary: List legacy administrator accounts
       responses:
         '200': { description: Administrator list }
-  /admin/aid/getPresignedURL:
+        '403': { description: User access required }
+  /user/aid/upload:
     post:
-      tags: [Assistant and media]
-      summary: Create a signed video upload URL
+      tags: [Legacy assistant and media]
+      summary: Send a question to the RAG service
+      description: Uses the RAG gRPC service at localhost:50052; clients should treat this endpoint as legacy.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [url, title]
+              required: [query]
               properties:
-                url: { type: string, format: uri }
-                title: { type: string }
-                description: { type: string }
-                tags: { type: array, items: { type: string } }
+                query: { type: string }
       responses:
-        '200': { description: Signed upload URL and video ID }
+        '200': { description: RAG answer }
+        '403': { description: User access required }
   /admin/aid/uploadFile:
     post:
-      tags: [Assistant and media]
-      summary: Send uploaded documents to the RAG service
+      tags: [Legacy assistant and media]
+      summary: Upload documents to the RAG service
+      description: Requires the RAG gRPC service at localhost:50052.
       requestBody:
         required: true
         content:
@@ -402,12 +379,33 @@ paths:
               properties:
                 files: { type: array, items: { type: string, format: binary } }
       responses:
-        '200': { description: Documents processed }
+        '200': { description: RAG upload completed }
+        '403': { description: Administrator access required }
+  /admin/aid/getPresignedURL:
+    post:
+      tags: [Legacy assistant and media]
+      summary: Legacy video upload URL handler
+      description: Not a supported upload flow; current implementation uses placeholder bucket and signing credentials.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, description]
+              properties:
+                url: { type: string, format: uri }
+                title: { type: string, description: Must end in .mp4 }
+                description: { type: string }
+                tags: { type: array, items: { type: string } }
+      responses:
+        '200': { description: Handler response }
+        '403': { description: Administrator access required }
   /admin/aid/getData:
     post:
-      tags: [Assistant and media]
-      summary: Run one approved tenant-scoped analytics report
-      description: Legacy GET is retained, but POST is recommended for Swagger and clients.
+      tags: [Legacy assistant and media]
+      summary: Legacy analytics handler (not recommended)
+      description: The handler asks a local Ollama instance to generate SQL and executes the result; it is not a fixed, parameterized report API.
       requestBody:
         required: true
         content:
@@ -416,87 +414,38 @@ paths:
               type: object
               required: [query]
               properties:
-                query: { type: string, enum: [assignments_by_branch, submission_status, overdue_assignments] }
+                query: { type: string }
       responses:
-        '200': { description: Fixed report result and report identifier }
-        '400': { $ref: '#/components/responses/Error' }
-  /user/aid/upload:
-    post:
-      tags: [Assistant and media]
-      summary: Ask the RAG assistant a question
-      description: Legacy GET is retained, but POST is recommended for Swagger and clients.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [query]
-              properties:
-                query: { type: string, maxLength: 4000 }
-      responses:
-        '200': { description: Assistant answer }
-  /aid/video/status:
+        '200': { description: Handler result; do not expose to untrusted callers }
+        '403': { description: Administrator access required }
+  /aid/video/{id}/status:
     put:
-      tags: [Assistant and media]
-      summary: Start processing for a video ID
+      tags: [Legacy assistant and media]
+      summary: Start legacy video processing
       parameters:
-        - { in: query, name: id, required: true, schema: { type: string, format: uuid } }
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
       responses:
         '200': { description: Processing request accepted }
-  /metrics:
-    get:
-      tags: [Assistant and media]
-      summary: Prometheus request counters
-      security: []
-      responses:
-        '200': { description: Prometheus text exposition format, content: { text/plain: { schema: { type: string } } } }
+        '403': { description: Administrator access required }
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
-  responses:
-    Error:
-      description: Request or authorization error
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              error: { type: string }
   schemas:
-    RegisterRequest:
-      type: object
-      required: [name, email, password, role]
-      properties:
-        tenant_id: { type: string, description: Registration is restricted to the default tenant }
-        name: { type: string }
-        email: { type: string, format: email }
-        password: { type: string, format: password }
-        role: { type: string, enum: [user, admin] }
-        branch: { type: string }
-        semester: { type: integer }
-    LoginRequest:
-      type: object
-      required: [email, password]
-      properties:
-        tenant_id: { type: string }
-        email: { type: string, format: email }
-        password: { type: string, format: password }
     AssignmentCreateRequest:
       type: object
       required: [email, task, due_date, subject_code]
       properties:
         email: { type: string, format: email }
         task: { type: string }
-        due_date: { type: string, format: date-time, description: RFC3339 due date }
-        branch: { type: string, description: Required unless course_id is provided }
-        semester: { type: integer, minimum: 1, maximum: 20, description: Required unless course_id is provided }
+        due_date: { type: string, format: date-time }
+        branch: { type: string }
+        semester: { type: integer, minimum: 1, maximum: 20 }
         subject_code: { type: string }
-        course_id: { type: string, format: uuid, description: Course scope identifier }
-        max_score: { type: number, minimum: 0.1, default: 100 }
+        course_id: { type: string, format: uuid }
+        max_score: { type: number, default: 100 }
         late_policy: { type: string, enum: [allow, reject, penalty], default: allow }
         late_penalty_percent: { type: number, minimum: 0, maximum: 100, default: 0 }
         allow_resubmission: { type: boolean, default: false }
@@ -504,20 +453,13 @@ components:
         reminder_hours: { type: integer, minimum: 1, maximum: 720, default: 48 }
         rubrics:
           type: array
-          items: { $ref: '#/components/schemas/RubricRequest' }
-    RubricRequest:
-      type: object
-      required: [criterion, max_points]
-      properties:
-        criterion: { type: string }
-        description: { type: string }
-        max_points: { type: number, minimum: 0.1 }
-    RubricScoreInput:
-      type: object
-      required: [rubric_id, points]
-      properties:
-        rubric_id: { type: string, format: uuid }
-        points: { type: number, minimum: 0 }
+          items:
+            type: object
+            required: [criterion, max_points]
+            properties:
+              criterion: { type: string }
+              description: { type: string }
+              max_points: { type: number }
     GradeSubmissionRequest:
       type: object
       required: [assignment_id, user_id]
@@ -525,136 +467,13 @@ components:
         assignment_id: { type: string, format: uuid }
         user_id: { type: string, format: uuid }
         status: { type: string, enum: [accepted, rejected], default: accepted }
-        score: { type: number, minimum: 0, description: Required for acceptance unless rubric_scores provided }
+        score: { type: number }
         feedback: { type: string }
         rubric_scores:
           type: array
-          items: { $ref: '#/components/schemas/RubricScoreInput' }
-    CourseCreateRequest:
-      type: object
-      required: [code, name, branch, semester]
-      properties:
-        code: { type: string }
-        name: { type: string }
-        branch: { type: string }
-        semester: { type: integer, minimum: 1, maximum: 20 }
-    Course:
-      type: object
-      properties:
-        course_id: { type: string, format: uuid }
-        tenant_id: { type: string }
-        code: { type: string }
-        name: { type: string }
-        branch: { type: string }
-        semester: { type: integer }
-        created_by: { type: string, format: uuid }
-        created_at: { type: string }
-    TenantMember:
-      type: object
-      properties:
-        user_id: { type: string, format: uuid }
-        tenant_id: { type: string }
-        name: { type: string }
-        email: { type: string, format: email }
-        role: { type: string, enum: [user, admin] }
-        status: { type: string, enum: [pending, verified, revoked] }
-        branch: { type: string }
-        semester: { type: integer }
-    MembershipStatusRequest:
-      type: object
-      required: [status]
-      properties:
-        status: { type: string, enum: [verified, revoked] }
-    InvitationEntry:
-      type: object
-      required: [email]
-      properties:
-        email: { type: string, format: email }
-        role: { type: string, enum: [user, admin], default: user }
-        name: { type: string }
-        branch: { type: string }
-        semester: { type: integer }
-        course_id: { type: string, format: uuid }
-    BulkInvitationRequest:
-      type: object
-      required: [invitations]
-      properties:
-        invitations:
-          type: array
-          items: { $ref: '#/components/schemas/InvitationEntry' }
-    RosterImportResult:
-      type: object
-      properties:
-        invited: { type: integer }
-        skipped: { type: integer }
-        errors:
-          type: array
-          items: { type: string }
-    PageMetadata:
-      type: object
-      properties:
-        page: { type: integer }
-        limit: { type: integer }
-        total: { type: integer }
-        total_pages: { type: integer }
-    SubmissionRevision:
-      type: object
-      properties:
-        revision_id: { type: string, format: uuid }
-        submission_id: { type: string, format: uuid }
-        assignment_id: { type: string, format: uuid }
-        user_id: { type: string, format: uuid }
-        attempt_number: { type: integer }
-        status: { type: string }
-        file: { type: string }
-        image: { type: string }
-        comments: { type: string }
-        feedback: { type: string }
-        score: { type: number, nullable: true }
-        late_submission: { type: boolean }
-        created_at: { type: string }
-        replaced_at: { type: string }
-    DashboardItem:
-      type: object
-      properties:
-        submission_id: { type: string, format: uuid }
-        assignment_id: { type: string, format: uuid }
-        task: { type: string }
-        subject_code: { type: string }
-        due_date: { type: string }
-        status: { type: string }
-        submitted: { type: boolean }
-        late: { type: boolean }
-        score: { type: number, nullable: true }
-        max_score: { type: number }
-        feedback: { type: string }
-        hours_until_due: { type: number }
-        reminder_hours: { type: integer }
-        attempt_number: { type: integer }
-        allow_resubmission: { type: boolean }
-    DashboardSummary:
-      type: object
-      properties:
-        upcoming: { type: integer }
-        overdue: { type: integer }
-        pending_review: { type: integer }
-        graded: { type: integer }
-    LearnerDashboard:
-      type: object
-      properties:
-        summary: { $ref: '#/components/schemas/DashboardSummary' }
-        upcoming:
-          type: array
-          items: { $ref: '#/components/schemas/DashboardItem' }
-        overdue:
-          type: array
-          items: { $ref: '#/components/schemas/DashboardItem' }
-        pending_review:
-          type: array
-          items: { $ref: '#/components/schemas/DashboardItem' }
-        graded:
-          type: array
-          items: { $ref: '#/components/schemas/DashboardItem' }
-        reminders:
-          type: array
-          items: { $ref: '#/components/schemas/DashboardItem' }
+          items:
+            type: object
+            required: [rubric_id, points]
+            properties:
+              rubric_id: { type: string, format: uuid }
+              points: { type: number, minimum: 0 }

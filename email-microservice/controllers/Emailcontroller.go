@@ -1,16 +1,13 @@
 package controllers
 
 import (
-	"strings"
-	"time"
-     "fmt"
 	"github.com/gofiber/fiber/v2"
 	"github.com/lokesh2201013/email-service/database"
 	"github.com/lokesh2201013/email-service/metrics"
 	"github.com/lokesh2201013/email-service/models"
 	"gopkg.in/gomail.v2"
-	"os"
-	"strconv"
+	"strings"
+	"time"
 )
 
 type EmailRequest struct {
@@ -25,7 +22,6 @@ type EmailRequest struct {
 func modifyAccumulatedEmail(adminName string) error {
 	var analytics []models.Analytics
 
-	
 	if err := database.DB.Where("admin_name = ?", adminName).Find(&analytics).Error; err != nil {
 		return err
 	}
@@ -35,17 +31,15 @@ func modifyAccumulatedEmail(adminName string) error {
 		totalAccumulatedEmails += record.AccumulatedEmail
 	}
 
-	
 	for i := range analytics {
 		analytics[i].AccumulatedEmail = totalAccumulatedEmails
 	}
-	
+
 	if err := database.DB.Save(&analytics).Error; err != nil {
 		return err
 	}
 	return nil
 }
-
 
 /*func createEmailMessage(sender models.Sender, req *EmailRequest) (*gomail.Message, error) {
 	mail := gomail.NewMessage()
@@ -75,7 +69,7 @@ func handleEmailError(err error, analytics *models.Analytics) error {
 	metricsWrapper := &metrics.AnalyticsWrapper{*analytics}
 	metricsWrapper.CalculateMetrics()
 	database.DB.Save(&analytics)
-	return fiber.NewError(500, "Failed to send email: " + errMsg)
+	return fiber.NewError(500, "Failed to send email: "+errMsg)
 }
 
 func SendEmail(c *fiber.Ctx) error {
@@ -145,29 +139,4 @@ func SendEmail(c *fiber.Ctx) error {
 	database.DB.Save(&analytics)
 
 	return c.JSON(fiber.Map{"message": "Emails processed successfully"})
-}
-
-func SendEmail_Grpc(subject string ,body string,Email []string) error {
-	port, err := strconv.Atoi(os.Getenv("SMTPPort"))
-	if err != nil {
-		return err
-	}
-	
-	d := gomail.NewDialer(os.Getenv("SMTPHost"), port, os.Getenv("Name"), os.Getenv("AppPassword"))
-	
-	fmt.Println("Working fine 6")
-	for _,to := range Email {
-		m := gomail.NewMessage()
-	m.SetHeader("From", os.Getenv("SenderEmail"))
-	m.SetHeader("To", to)
-	m.SetHeader("Subject", subject)
-	m.SetBody("text/plain", body)
-	err:=d.DialAndSend(m)
-	fmt.Println("Working fine 7")
-	if err != nil {
-		return err
-	}
-  }
-  
-	return nil
 }

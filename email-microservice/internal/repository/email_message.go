@@ -38,10 +38,10 @@ func (r *PostgresEmailMessageRepository) Enqueue(ctx context.Context, messages [
 
 	const query = `
 		INSERT INTO email_messages (
-			id, sender_email, recipient, subject, body, format, status,
+			id, sender_email, recipient, subject, body, format, status, use_global_smtp,
 			attempts, max_attempts, last_error, next_retry_at, created_at, updated_at
 		) VALUES (
-			:id, :sender_email, :recipient, :subject, :body, :format, :status,
+			:id, :sender_email, :recipient, :subject, :body, :format, :status, :use_global_smtp,
 			:attempts, :max_attempts, :last_error, :next_retry_at, :created_at, :updated_at
 		)
 	`
@@ -79,7 +79,7 @@ func (r *PostgresEmailMessageRepository) GetPending(ctx context.Context, limit i
 			LIMIT $1
 			FOR UPDATE SKIP LOCKED
 		)
-		RETURNING id, sender_email, recipient, subject, body, format, status,
+		RETURNING id, sender_email, recipient, subject, body, format, status, use_global_smtp,
 		          attempts, max_attempts, last_error, next_retry_at, created_at, updated_at,
 		          delivered_at, failed_at
 	`
@@ -196,7 +196,7 @@ func (r *PostgresEmailMessageRepository) MarkFailed(ctx context.Context, id stri
 // GetByID retrieves a single email message by ID.
 func (r *PostgresEmailMessageRepository) GetByID(ctx context.Context, id string) (*domain.EmailMessage, error) {
 	const query = `
-		SELECT id, sender_email, recipient, subject, body, format, status,
+		SELECT id, sender_email, recipient, subject, body, format, status, use_global_smtp,
 		       attempts, max_attempts, last_error, next_retry_at, created_at, updated_at,
 		       delivered_at, failed_at
 		FROM email_messages
@@ -267,7 +267,7 @@ func (r *PostgresEmailMessageRepository) ListHistory(ctx context.Context, filter
 
 	offset := (page - 1) * limit
 	query := fmt.Sprintf(`
-		SELECT id, sender_email, recipient, subject, body, format, status,
+		SELECT id, sender_email, recipient, subject, body, format, status, use_global_smtp,
 		       attempts, max_attempts, last_error, next_retry_at, created_at, updated_at,
 		       delivered_at, failed_at
 		FROM email_messages

@@ -36,7 +36,11 @@ func (h *EmailHandler) SendEmail(c *fiber.Ctx) error {
 	}
 
 	// Call service
-	resp, err := h.emailService.SendEmail(c.Context(), &req)
+	username, ok := c.Locals("username").(string)
+	if !ok || username == "" {
+		return h.sendError(c, apperror.Unauthorized("missing authenticated user"))
+	}
+	resp, err := h.emailService.SendEmailForUser(c.Context(), username, &req)
 	if err != nil {
 		return h.sendError(c, err)
 	}
